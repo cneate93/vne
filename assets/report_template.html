@@ -93,6 +93,29 @@
   <h2>Traceroute</h2>
   <pre>{{ .Trace.Raw }}</pre>
 
+  {{ if .CiscoIOS }}
+  <h2>Cisco IOS Pack</h2>
+  {{ if .CiscoIOS.Interfaces }}
+  <table>
+    <tr><th>Interface</th><th>Duplex</th><th>Speed</th><th>Input Errors</th><th>Output Errors</th><th>CRC</th></tr>
+    {{ range .CiscoIOS.Interfaces }}
+    <tr>
+      <td>{{ .Iface }}</td>
+      <td>{{ .Duplex }}</td>
+      <td>{{ .Speed }}</td>
+      <td>{{ .InputErrors }}</td>
+      <td>{{ .OutputErrors }}</td>
+      <td>{{ .CRC }}</td>
+    </tr>
+    {{ end }}
+  </table>
+  {{ end }}
+  <details>
+    <summary>show interfaces raw</summary>
+    <pre>{{ .CiscoIOS.Raw }}</pre>
+  </details>
+  {{ end }}
+
   {{ if .FortiRaw }}
   <h2>FortiGate Pack (Raw)</h2>
   <pre>{{ printf "%+v" .FortiRaw }}</pre>

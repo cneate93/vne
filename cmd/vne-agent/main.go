@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,10 +28,16 @@ type RunContext struct {
 	UserNotes          string
 	TargetHost         string // default internet target
 	UsePythonFortigate bool
+	UsePythonCisco     bool
 	FortiHost          string
 	FortiUser          string
 	FortiPass          string
 	PythonPath         string
+	CiscoHost          string
+	CiscoUser          string
+	CiscoPass          string
+	CiscoSecret        string
+	CiscoPort          int
 }
 
 func prompt(s string) string {
@@ -38,6 +45,13 @@ func prompt(s string) string {
 	in := bufio.NewReader(os.Stdin)
 	txt, _ := in.ReadString('\n')
 	return strings.TrimSpace(txt)
+}
+
+func defaultPythonPath() string {
+	if isWindows() {
+		return "python"
+	}
+	return "python3"
 }
 
 func yesno(s string) bool {
@@ -114,10 +128,10 @@ func main() {
 	normalizeSNMPArgs()
 	targetFlag := flag.String("target", "", "Target for WAN checks (default 1.1.1.1)")
 	outFlag := flag.String("out", "", "Output HTML report path (default vne-report.html)")
-	skipPythonFlag := flag.Bool("skip-python", false, "Skip the optional FortiGate Python pack")
+	skipPythonFlag := flag.Bool("skip-python", false, "Skip optional Python packs (FortiGate, Cisco IOS)")
 	serveFlag := flag.Bool("serve", false, "Serve the generated report over HTTP on :8080")
 	openFlag := flag.Bool("open", false, "Open the generated report after creation")
-	pythonFlag := flag.String("python", "", "Path to python executable for the FortiGate pack")
+	pythonFlag := flag.String("python", "", "Path to python executable for optional packs")
 	verboseFlag := flag.Bool("verbose", false, "Enable verbose logging to vne.log")
 	bundleFlag := flag.Bool("bundle", false, "Write zipped evidence bundle (vne-evidence-YYYYMMDD-HHMM.zip)")
 	jsonFlag := flag.String("json", "", "Write report data as indented JSON to the given path")
@@ -148,6 +162,7 @@ func main() {
 
 	ctx := RunContext{
 		TargetHost: "1.1.1.1",
+		CiscoPort:  22,
 	}
 
 	if *targetFlag != "" {
@@ -175,23 +190,39 @@ func main() {
 
 	if nonInteractive {
 		if !*skipPythonFlag {
-			log.Println("Skipping FortiGate Python pack in non-interactive mode; use interactive mode to supply credentials if needed.")
+			log.Println("Skipping optional Python packs in non-interactive mode; use interactive mode to supply credentials if needed.")
 		}
 	} else if *skipPythonFlag {
-		fmt.Println("→ Skipping FortiGate Python pack (requested via --skip-python).")
-	} else if yesno("Do you want to run the FortiGate Python pack (optional)?") {
-		ctx.UsePythonFortigate = true
-		ctx.FortiHost = prompt("FortiGate host/IP: ")
-		ctx.FortiUser = prompt("FortiGate username: ")
-		ctx.FortiPass = prompt("FortiGate password (will not be stored): ")
-		if ctx.PythonPath == "" {
-			pp := prompt("Path to python executable (default 'python3' on macOS/Linux, 'python' on Windows): ")
-			if pp == "" {
-				if isWindows() {
-					ctx.PythonPath = "python"
+		fmt.Println("→ Skipping optional Python packs (requested via --skip-python).")
+	} else {
+		if yesno("Do you want to run the FortiGate Python pack (optional)?") {
+			ctx.UsePythonFortigate = true
+			ctx.FortiHost = prompt("FortiGate host/IP: ")
+			ctx.FortiUser = prompt("FortiGate username: ")
+			ctx.FortiPass = prompt("FortiGate password (will not be stored): ")
+		}
+		if yesno("Do you want to run the Cisco IOS Python pack (optional)?") {
+			ctx.UsePythonCisco = true
+			ctx.CiscoHost = prompt("Cisco IOS host/IP: ")
+			ctx.CiscoUser = prompt("Cisco IOS username: ")
+			ctx.CiscoPass = prompt("Cisco IOS password (will not be stored): ")
+			ctx.CiscoSecret = prompt("Cisco IOS enable secret (optional): ")
+			portStr := prompt("Cisco IOS SSH port (default 22): ")
+			if portStr != "" {
+				if p, err := strconv.Atoi(portStr); err == nil && p > 0 {
+					ctx.CiscoPort = p
 				} else {
-					ctx.PythonPath = "python3"
+					fmt.Println("  Invalid port provided; defaulting to 22.")
+					ctx.CiscoPort = 22
 				}
+			}
+		}
+		if (ctx.UsePythonFortigate || ctx.UsePythonCisco) && ctx.PythonPath == "" {
+			defPy := defaultPythonPath()
+			promptMsg := fmt.Sprintf("Path to python executable (default '%s'): ", defPy)
+			pp := prompt(promptMsg)
+			if pp == "" {
+				ctx.PythonPath = defPy
 			} else {
 				ctx.PythonPath = pp
 			}
@@ -251,6 +282,7 @@ func main() {
 
 	// 7) Optional FortiGate Python pack
 	var fortiRaw map[string]any
+	var ciscoRaw *report.CiscoPackResults
 	if ctx.UsePythonFortigate {
 		fmt.Println("→ Running FortiGate Python pack…")
 		log.Println("Running FortiGate Python pack")
@@ -269,6 +301,34 @@ func main() {
 			log.Println("Forti pack error:", err)
 		} else {
 			_ = json.Unmarshal(out, &fortiRaw)
+		}
+	}
+
+	if ctx.UsePythonCisco {
+		fmt.Println("→ Running Cisco IOS Python pack…")
+		log.Println("Running Cisco IOS Python pack")
+		packDir := filepath.Join("packs", "python", "cisco_ios")
+		payload := map[string]any{
+			"host":     ctx.CiscoHost,
+			"username": ctx.CiscoUser,
+			"password": ctx.CiscoPass,
+		}
+		if ctx.CiscoSecret != "" {
+			payload["secret"] = ctx.CiscoSecret
+		}
+		if ctx.CiscoPort != 0 && ctx.CiscoPort != 22 {
+			payload["port"] = ctx.CiscoPort
+		}
+		out, err := sshx.RunPythonPack(ctx.PythonPath, filepath.Join(packDir, "parser.py"), payload)
+		if err != nil {
+			log.Println("Cisco IOS pack error:", err)
+		} else {
+			var parsed report.CiscoPackResults
+			if err := json.Unmarshal(out, &parsed); err != nil {
+				log.Println("Cisco IOS pack parse error:", err)
+			} else {
+				ciscoRaw = &parsed
+			}
 		}
 	}
 
@@ -348,6 +408,9 @@ func main() {
 			})
 		}
 	}
+	if ciscoRaw != nil {
+		findings = append(findings, ciscoRaw.Findings...)
+	}
 
 	// 9) Assemble report (pre-format loss % strings to keep template simple)
 	res := report.Results{
@@ -362,6 +425,7 @@ func main() {
 		MTU:         mtu,
 		Findings:    findings,
 		FortiRaw:    fortiRaw,
+		CiscoIOS:    ciscoRaw,
 		IfaceHealth: ifaceHealth,
 		GwLossPct:   fmt.Sprintf("%.0f%%", gwPing.Loss*100),
 		WanLossPct:  fmt.Sprintf("%.0f%%", wanPing.Loss*100),
