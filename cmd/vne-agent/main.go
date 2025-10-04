@@ -464,50 +464,71 @@ func main() {
 		log.Println("Evidence bundle written to", bundleName)
 	}
 
-	if *openFlag {
-		absPath, err := filepath.Abs(outPath)
-		if err != nil {
-			log.Printf("Unable to resolve absolute path for %s: %v", outPath, err)
-			absPath = outPath
-		}
-
-		var cmd *exec.Cmd
-		switch runtime.GOOS {
-		case "windows":
-			cmd = exec.Command("cmd", "/c", "start", "", absPath)
-		case "darwin":
-			cmd = exec.Command("open", absPath)
-		default:
-			cmd = exec.Command("xdg-open", absPath)
-		}
-
-		fmt.Println("→ Opening report…")
-		if err := cmd.Start(); err != nil {
-			fmt.Println("Unable to open report:", err)
-			log.Println("open report error:", err)
-		}
-	}
-
+	servedURL := ""
 	if *serveFlag {
-		relPath := outPath
-		if filepath.IsAbs(relPath) {
-			if p, err := filepath.Rel(".", relPath); err == nil {
-				relPath = p
-			}
+		servedURL = buildServedURL(outPath)
+		fmt.Printf("Serving report at %s\n", servedURL)
+		log.Println("Serving report at", servedURL)
+		serverErr := make(chan error, 1)
+		go func() {
+			serverErr <- http.ListenAndServe(":8080", http.FileServer(http.Dir(".")))
+		}()
+
+		if *openFlag {
+			fmt.Println("→ Opening report in browser…")
+			go func(url string) {
+				time.Sleep(200 * time.Millisecond)
+				if err := openInBrowser(url); err != nil {
+					fmt.Println("Unable to open report:", err)
+					log.Println("open report error:", err)
+				}
+			}(servedURL)
 		}
-		relPath = filepath.ToSlash(relPath)
-		parts := strings.Split(relPath, "/")
-		for i, part := range parts {
-			parts[i] = url.PathEscape(part)
-		}
-		servedPath := strings.Join(parts, "/")
-		fmt.Printf("Serving report at http://localhost:8080/%s\n", servedPath)
-		log.Fatal(http.ListenAndServe(":8080", http.FileServer(http.Dir("."))))
+
+		log.Fatal(<-serverErr)
+	} else if *openFlag {
+		fmt.Println("→ --open requires --serve; ignoring.")
+		log.Println("--open requested without --serve; ignoring")
 	}
 }
 
 func isWindows() bool {
 	return runtime.GOOS == "windows"
+}
+
+func buildServedURL(outPath string) string {
+	relPath := outPath
+	if filepath.IsAbs(relPath) {
+		if p, err := filepath.Rel(".", relPath); err == nil {
+			relPath = p
+		}
+	}
+	if relPath == "." {
+		relPath = ""
+	}
+	relPath = filepath.ToSlash(relPath)
+	parts := strings.Split(relPath, "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	servedPath := strings.Join(parts, "/")
+	if servedPath == "" {
+		return "http://localhost:8080/"
+	}
+	return "http://localhost:8080/" + servedPath
+}
+
+func openInBrowser(target string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", "", target)
+	case "darwin":
+		cmd = exec.Command("open", target)
+	default:
+		cmd = exec.Command("xdg-open", target)
+	}
+	return cmd.Start()
 }
 
 func writeJSONResults(jsonPath string, res report.Results) error {
