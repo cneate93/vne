@@ -8,19 +8,21 @@ git clone https://github.com/cneate93/vne.git
 cd vne
 # optional: build binaries for all platforms
 make build
-# interactive run
-go run ./cmd/vne-agent
+# run and open the report in your browser
+go run ./cmd/vne-agent --serve --open
 ```
+
+If you prefer to open the HTML manually, the report is written to `./vne-report.html`. Use `open vne-report.html` on macOS or `xdg-open vne-report.html` (or `wslview` under WSL) on Linux.
 
 ### Windows (PowerShell)
 ```powershell
 git clone https://github.com/cneate93/vne.git
 cd vne
-# interactive run
-go run .\cmd\vne-agent
+# run and open the report in your browser
+go run .\cmd\vne-agent --serve --open
 ```
 
-The CLI writes `vne-report.html` by default. Pass `--serve` to expose the generated file on a temporary localhost web server and add `--open` to automatically launch your default browser after the report finishes rendering.
+The Windows report is saved as `.\vne-report.html`. Launch it manually with `start .\vne-report.html` if you do not use `--serve --open`.
 
 ## CLI flags
 | Flag | Description |
@@ -51,6 +53,7 @@ pip install netmiko
 ```
 
 ## Troubleshooting
-- **`exec: "traceroute": executable file not found`** – Install `traceroute` (macOS: `brew install inetutils`, Debian/Ubuntu: `sudo apt install traceroute`). On Linux the CLI will fall back to `tracepath` if available.
-- **`ping: socket: Operation not permitted` / ICMP permission errors** – Ensure the system `ping` binary can send ICMP (Linux: `sudo apt install iputils-ping` and verify it has the `cap_net_raw` capability, or run the CLI with elevated privileges). Containers and minimal distros may require granting `CAP_NET_RAW` to the process.
+- **`exec: "traceroute": executable file not found`** – Install `traceroute` (macOS: `brew install inetutils`; Debian/Ubuntu: `sudo apt install traceroute`; RHEL/CentOS/Fedora: `sudo dnf install traceroute`). On Linux the CLI will fall back to `tracepath` if available.
+- **`exec: "ping": executable file not found`** – Install the platform ping package (Debian/Ubuntu: `sudo apt install iputils-ping`; RHEL/CentOS/Fedora: `sudo dnf install iputils`; Alpine: `sudo apk add iputils`). Windows and macOS ship with ping by default.
+- **`ping: socket: Operation not permitted` / ICMP permission errors** – Ensure the system `ping` binary can send ICMP. On Linux, verify it carries `cap_net_raw` (`getcap $(command -v ping)`), reapply it if necessary (`sudo setcap cap_net_raw+ep $(command -v ping)`), or run the CLI with elevated privileges. Containers and minimal distros may require adding the `CAP_NET_RAW` capability to the runtime.
 - **FortiGate pack fails to launch** – Provide the correct Python interpreter with `--python` and verify `netmiko` is installed in that environment.
