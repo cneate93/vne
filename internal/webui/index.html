@@ -25,6 +25,24 @@
                         </aside>
 
                         <div class="content-main">
+                                <section class="card troubleshooter-card" id="troubleshooter-card">
+                                        <div class="troubleshooter-header">
+                                                <h2>Troubleshooter</h2>
+                                                <p class="card-subtitle">Pick a guided flow to focus the diagnostics on the areas you care about most.</p>
+                                        </div>
+                                        <div class="troubleshooter-actions">
+                                                <button type="button" class="troubleshooter-action" id="troubleshooter-lan" data-mode="lan">My issue is inside my network (LAN)</button>
+                                                <button type="button" class="troubleshooter-action" id="troubleshooter-wan" data-mode="wan">My issue is Internet/WAN</button>
+                                        </div>
+                                        <div id="troubleshooter-body" class="troubleshooter-body" hidden>
+                                                <h3 id="troubleshooter-title" class="troubleshooter-title"></h3>
+                                                <p id="troubleshooter-intro" class="troubleshooter-intro"></p>
+                                                <ul id="troubleshooter-checklist" class="troubleshooter-checklist"></ul>
+                                                <p id="troubleshooter-status" class="troubleshooter-status" aria-live="polite"></p>
+                                                <p id="troubleshooter-error" class="error" role="alert" hidden></p>
+                                        </div>
+                                </section>
+
                                 <section class="card">
                                         <h2>Start a run</h2>
                                         <form id="start-form">

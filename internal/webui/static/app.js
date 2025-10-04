@@ -56,6 +56,14 @@
         const compareWanRtt = document.getElementById('compare-wan-rtt');
         const compareWanJitter = document.getElementById('compare-wan-jitter');
         const compareMtu = document.getElementById('compare-mtu');
+        const troubleshooterLanBtn = document.getElementById('troubleshooter-lan');
+        const troubleshooterWanBtn = document.getElementById('troubleshooter-wan');
+        const troubleshooterBody = document.getElementById('troubleshooter-body');
+        const troubleshooterTitle = document.getElementById('troubleshooter-title');
+        const troubleshooterIntro = document.getElementById('troubleshooter-intro');
+        const troubleshooterChecklist = document.getElementById('troubleshooter-checklist');
+        const troubleshooterStatus = document.getElementById('troubleshooter-status');
+        const troubleshooterError = document.getElementById('troubleshooter-error');
 
         const PHASE_LABELS = {
                 idle: 'Idle',
@@ -74,6 +82,38 @@
                 error: 'Error',
         };
 
+        const consoleCard = consoleEl ? consoleEl.closest('.card') : null;
+        const highlightableCards = [lanCard, wanCard, devicesCard, compareCard, consoleCard].filter(Boolean);
+        const troubleshooterButtons = [troubleshooterLanBtn, troubleshooterWanBtn].filter(Boolean);
+
+        const TROUBLESHOOTER_DEFAULT_STATUS = 'Pick a guided path above to run a focused check.';
+        const TROUBLESHOOTER_MODES = {
+                lan: {
+                        title: 'LAN health checklist',
+                        intro: 'Focus on gateway reachability and conditions inside your local network.',
+                        checklist: [
+                                'Review LAN performance for RTT, 95th percentile, and jitter spikes against the default gateway.',
+                                'Watch the console for packet loss or ARP failures while gateway tests run.',
+                                'Check Discovered Devices for duplicate IP/MAC addresses or unexpected hardware.',
+                        ],
+                        scan: true,
+                        statusMessage: 'Running LAN-focused diagnostics… (extra gateway pings and local discovery).',
+                        completeMessage: 'LAN-focused diagnostics finished. Review the highlighted panels below.',
+                },
+                wan: {
+                        title: 'WAN reachability checklist',
+                        intro: 'Zero in on Internet latency, DNS resolution, and upstream routing.',
+                        checklist: [
+                                'Inspect WAN performance for latency, packet loss, and jitter toward your Internet target.',
+                                'Follow the console output for DNS lookups and traceroute hops to spot upstream issues.',
+                                'Use the Comparison panel to contrast this run with a previous healthy baseline.',
+                        ],
+                        scan: false,
+                        statusMessage: 'Running WAN-focused diagnostics… (external reachability and DNS checks).',
+                        completeMessage: 'WAN-focused diagnostics finished. Review the highlighted WAN insights.',
+                },
+        };
+
         let eventSource = null;
         let lastVendorSuggestions = [];
         let vendorPromptShown = false;
@@ -84,6 +124,8 @@
         let compareRunId = null;
         let historyEntries = [];
         const historyCache = new Map();
+        let activeTroubleshooterMode = null;
+        let troubleshooterPendingRun = false;
 
         const MINUS = '\u2212';
 
@@ -562,44 +604,229 @@
                 return `${sign}${Math.abs(delta).toFixed(decimals)} ms`;
         }
 
-        form.addEventListener('submit', async (event) => {
-                event.preventDefault();
-                startError.hidden = true;
-                startError.textContent = '';
+        function setTroubleshooterStatus(message) {
+                if (!troubleshooterStatus) {
+                        return;
+                }
+                troubleshooterStatus.textContent = message || '';
+        }
 
-                const payload = {
-                        target: targetInput.value.trim(),
-                        scan: scanInput.checked,
-                };
+        function populateTroubleshooterChecklist(items) {
+                if (!troubleshooterChecklist) {
+                        return;
+                }
+                troubleshooterChecklist.innerHTML = '';
+                if (!Array.isArray(items) || items.length === 0) {
+                        return;
+                }
+                for (const item of items) {
+                        if (typeof item !== 'string' || item.trim() === '') {
+                                continue;
+                        }
+                        const entry = document.createElement('li');
+                        entry.textContent = item.trim();
+                        troubleshooterChecklist.appendChild(entry);
+                }
+        }
+
+        function setTroubleshooterActiveButton(mode) {
+                for (const btn of troubleshooterButtons) {
+                        if (!btn) {
+                                continue;
+                        }
+                        const isActive = btn.dataset && btn.dataset.mode === mode;
+                        btn.classList.toggle('is-active', Boolean(isActive));
+                }
+        }
+
+        function setFocusHighlights(mode) {
+                for (const card of highlightableCards) {
+                        card.classList.remove('card-focus');
+                }
+                if (!mode) {
+                        return;
+                }
+                const targets = mode === 'lan'
+                        ? [lanCard, devicesCard, consoleCard]
+                        : mode === 'wan'
+                                ? [wanCard, compareCard, consoleCard]
+                                : [];
+                for (const card of targets) {
+                        if (card) {
+                                card.classList.add('card-focus');
+                        }
+                }
+        }
+
+        function setTroubleshooterBusy(busy) {
+                for (const btn of troubleshooterButtons) {
+                        if (!btn) {
+                                continue;
+                        }
+                        btn.disabled = Boolean(busy);
+                }
+        }
+
+        function handleTroubleshooterCompletion(status) {
+                if (!troubleshooterPendingRun) {
+                        setTroubleshooterBusy(false);
+                        return;
+                }
+                const config = activeTroubleshooterMode ? TROUBLESHOOTER_MODES[activeTroubleshooterMode] : null;
+                if (config) {
+                        if (status === 'finished') {
+                                setTroubleshooterStatus(config.completeMessage || 'Focused diagnostics finished.');
+                        } else if (status === 'error') {
+                                setTroubleshooterStatus('Focused diagnostics failed. Review the console for details.');
+                        } else {
+                                setTroubleshooterStatus(config.statusMessage || TROUBLESHOOTER_DEFAULT_STATUS);
+                        }
+                        setFocusHighlights(activeTroubleshooterMode);
+                } else {
+                        setTroubleshooterStatus(TROUBLESHOOTER_DEFAULT_STATUS);
+                }
+                setTroubleshooterBusy(false);
+                troubleshooterPendingRun = false;
+        }
+
+        async function startRun(payload = {}, options = {}) {
+                const {
+                        errorElement = startError,
+                        statusOverride = null,
+                        conflictMessage = 'A run is already in progress.',
+                        failureMessage = 'Unable to start diagnostics.',
+                        unexpectedMessage = 'Unexpected error starting diagnostics.',
+                } = options;
+
+                if (errorElement) {
+                        errorElement.hidden = true;
+                        errorElement.textContent = '';
+                }
+
+                const requestTarget = typeof payload.target === 'string'
+                        ? payload.target.trim()
+                        : (targetInput ? targetInput.value.trim() : '');
+                const requestScan = typeof payload.scan === 'boolean'
+                        ? payload.scan
+                        : Boolean(scanInput && scanInput.checked);
+                const request = { target: requestTarget, scan: requestScan };
 
                 try {
                         const resp = await fetch('/api/start', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(payload),
+                                body: JSON.stringify(request),
                         });
                         if (resp.status === 409) {
-                                startError.textContent = 'A run is already in progress.';
-                                startError.hidden = false;
-                                return;
+                                if (errorElement) {
+                                        errorElement.textContent = conflictMessage;
+                                        errorElement.hidden = false;
+                                }
+                                return false;
                         }
                         if (!resp.ok) {
-                                startError.textContent = 'Unable to start diagnostics.';
-                                startError.hidden = false;
-                                return;
+                                if (errorElement) {
+                                        errorElement.textContent = failureMessage;
+                                        errorElement.hidden = false;
+                                }
+                                return false;
                         }
-                        resultsEl.textContent = '(Working…)';
-                        statusMessage.textContent = 'Starting diagnostics…';
+                        if (resultsEl) {
+                                resultsEl.textContent = '(Working…)';
+                        }
+                        statusMessage.textContent = statusOverride || 'Starting diagnostics…';
                         applyPhase('starting');
                         setProgress(5);
                         clearDevicesTable();
                         setBundleAvailability(false);
+                        return true;
                 } catch (err) {
                         console.error(err);
-                        startError.textContent = 'Unexpected error starting diagnostics.';
-                        startError.hidden = false;
+                        if (errorElement) {
+                                errorElement.textContent = unexpectedMessage;
+                                errorElement.hidden = false;
+                        }
+                        return false;
                 }
+        }
+
+        form.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                const payload = {
+                        target: targetInput ? targetInput.value.trim() : '',
+                        scan: Boolean(scanInput && scanInput.checked),
+                };
+                await startRun(payload, { errorElement: startError });
         });
+
+        async function triggerTroubleshooter(mode) {
+                const config = TROUBLESHOOTER_MODES[mode];
+                if (!config) {
+                        return;
+                }
+                activeTroubleshooterMode = mode;
+                troubleshooterPendingRun = false;
+                if (troubleshooterBody) {
+                        troubleshooterBody.hidden = false;
+                }
+                if (troubleshooterError) {
+                        troubleshooterError.hidden = true;
+                        troubleshooterError.textContent = '';
+                }
+                if (troubleshooterTitle) {
+                        troubleshooterTitle.textContent = config.title || '';
+                }
+                if (troubleshooterIntro) {
+                        troubleshooterIntro.textContent = config.intro || '';
+                }
+                populateTroubleshooterChecklist(config.checklist || []);
+                setTroubleshooterActiveButton(mode);
+                setFocusHighlights(mode);
+                const statusText = config.statusMessage || 'Running focused diagnostics…';
+                setTroubleshooterStatus(statusText);
+                setTroubleshooterBusy(true);
+
+                const payload = {};
+                if (typeof config.scan === 'boolean') {
+                        payload.scan = config.scan;
+                        if (scanInput) {
+                                scanInput.checked = config.scan;
+                        }
+                }
+                if (targetInput) {
+                        const trimmed = targetInput.value.trim();
+                        targetInput.value = trimmed;
+                        payload.target = trimmed;
+                }
+
+                const success = await startRun(payload, {
+                        errorElement: troubleshooterError,
+                        statusOverride: statusText,
+                        conflictMessage: 'Please wait for the current run to finish before starting another troubleshooter pass.',
+                        failureMessage: 'Unable to start focused diagnostics.',
+                        unexpectedMessage: 'Unexpected error starting focused diagnostics.',
+                });
+
+                if (success) {
+                        troubleshooterPendingRun = true;
+                } else {
+                        setTroubleshooterBusy(false);
+                        if (!troubleshooterError || troubleshooterError.hidden) {
+                                setTroubleshooterStatus('Unable to start focused diagnostics. Try again shortly.');
+                        }
+                }
+        }
+
+        if (troubleshooterLanBtn) {
+                troubleshooterLanBtn.addEventListener('click', () => triggerTroubleshooter('lan'));
+        }
+        if (troubleshooterWanBtn) {
+                troubleshooterWanBtn.addEventListener('click', () => triggerTroubleshooter('wan'));
+        }
+
+        setTroubleshooterStatus(TROUBLESHOOTER_DEFAULT_STATUS);
+        populateTroubleshooterChecklist([]);
+        setFocusHighlights(null);
 
         function applyPhase(phase) {
                 const label = PHASE_LABELS[phase] || phase || 'unknown';
@@ -697,6 +924,7 @@
                         populateDevicesTable(null);
                         setBundleAvailability(false);
                 }
+                handleTroubleshooterCompletion(data.status);
         }
 
         function setBundleAvailability(available) {
