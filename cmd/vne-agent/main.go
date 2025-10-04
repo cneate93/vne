@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -45,34 +46,70 @@ func yesno(s string) bool {
 }
 
 func main() {
+	targetFlag := flag.String("target", "", "Target for WAN checks (default 1.1.1.1)")
+	outFlag := flag.String("out", "", "Output HTML report path (default vne-report.html)")
+	skipPythonFlag := flag.Bool("skip-python", false, "Skip the optional FortiGate Python pack")
+	pythonFlag := flag.String("python", "", "Path to python executable for the FortiGate pack")
+	flag.Parse()
+
+	flagsSet := map[string]bool{}
+	flag.CommandLine.Visit(func(f *flag.Flag) {
+		flagsSet[f.Name] = true
+	})
+	nonInteractive := flagsSet["target"] || flagsSet["out"] || flagsSet["skip-python"]
+
 	fmt.Println("== Virtual Network Engineer (MVP) ==")
 
 	ctx := RunContext{
 		TargetHost: "1.1.1.1",
 	}
 
-	ctx.UserNotes = prompt("Optional: describe the problem (e.g., 'Zoom choppy, started yesterday'):\n> ")
-
-	th := prompt("Target for WAN checks (default 1.1.1.1): ")
-	if th != "" {
-		ctx.TargetHost = th
+	if *targetFlag != "" {
+		ctx.TargetHost = *targetFlag
+	}
+	if *pythonFlag != "" {
+		ctx.PythonPath = *pythonFlag
 	}
 
-	if yesno("Do you want to run the FortiGate Python pack (optional)?") {
+	if nonInteractive {
+		ctx.UserNotes = ""
+	} else {
+		ctx.UserNotes = prompt("Optional: describe the problem (e.g., 'Zoom choppy, started yesterday'):\n> ")
+
+		th := prompt("Target for WAN checks (default 1.1.1.1): ")
+		if th != "" {
+			ctx.TargetHost = th
+		}
+	}
+
+	if nonInteractive {
+		if !*skipPythonFlag {
+			log.Println("Skipping FortiGate Python pack in non-interactive mode; use interactive mode to supply credentials if needed.")
+		}
+	} else if *skipPythonFlag {
+		fmt.Println("→ Skipping FortiGate Python pack (requested via --skip-python).")
+	} else if yesno("Do you want to run the FortiGate Python pack (optional)?") {
 		ctx.UsePythonFortigate = true
 		ctx.FortiHost = prompt("FortiGate host/IP: ")
 		ctx.FortiUser = prompt("FortiGate username: ")
 		ctx.FortiPass = prompt("FortiGate password (will not be stored): ")
-		pp := prompt("Path to python executable (default 'python3' on macOS/Linux, 'python' on Windows): ")
-		if pp == "" {
-			if isWindows() {
-				ctx.PythonPath = "python"
+		if ctx.PythonPath == "" {
+			pp := prompt("Path to python executable (default 'python3' on macOS/Linux, 'python' on Windows): ")
+			if pp == "" {
+				if isWindows() {
+					ctx.PythonPath = "python"
+				} else {
+					ctx.PythonPath = "python3"
+				}
 			} else {
-				ctx.PythonPath = "python3"
+				ctx.PythonPath = pp
 			}
-		} else {
-			ctx.PythonPath = pp
 		}
+	}
+
+	outPath := "vne-report.html"
+	if *outFlag != "" {
+		outPath = *outFlag
 	}
 
 	// 1) Local network info
@@ -183,7 +220,6 @@ func main() {
 		GatewayUsed: gw,
 	}
 
-	outPath := "vne-report.html"
 	if err := report.RenderHTML(res, "assets/report_template.html", outPath); err != nil {
 		log.Fatal(err)
 	}
