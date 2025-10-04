@@ -60,12 +60,13 @@
   {{ if .Discovered }}
   <h3>Discovered Devices (L2)</h3>
   <table>
-    <tr><th>Interface</th><th>IP</th><th>MAC</th></tr>
+    <tr><th>Interface</th><th>IP</th><th>MAC</th><th>Vendor</th></tr>
     {{ range .Discovered }}
       <tr>
         <td>{{ .IfName }}</td>
         <td>{{ .IP }}</td>
         <td>{{ .MAC }}</td>
+        <td>{{ .Vendor }}</td>
       </tr>
     {{ end }}
   </table>
