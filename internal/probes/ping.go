@@ -5,18 +5,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os/exec"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type PingResult struct {
-	AvgMs float64 `json:"avg_ms"`
-	Loss  float64 `json:"loss"`
-	Raw   string  `json:"raw"`
+	AvgMs    float64 `json:"avg_ms"`
+	P95Ms    float64 `json:"p95_ms"`
+	JitterMs float64 `json:"jitter_ms"`
+	Loss     float64 `json:"loss"`
+	Raw      string  `json:"raw"`
 }
 
 func PingHost(target string, count int, timeout time.Duration) (PingResult, error) {
@@ -65,10 +69,13 @@ func PingHost(target string, count int, timeout time.Duration) (PingResult, erro
 var lossRe = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)%\s*loss`)
 var percentRe = regexp.MustCompile(`(\d+(?:\.\d+)?)%`)
 
+var pingTimeRe = regexp.MustCompile(`(?i)time[=<]?\s*([0-9]+(?:\.[0-9]+)?)\s*ms`)
+
 func parsePing(out string) PingResult {
 	result := PingResult{Raw: out}
 	lines := strings.Split(out, "\n")
 	parsedLoss := false
+	samples := extractPingSamples(out)
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -99,6 +106,12 @@ func parsePing(out string) PingResult {
 			result.AvgMs = extractAvg(trimmed)
 		}
 	}
+
+	if result.AvgMs == 0 && len(samples) > 0 {
+		result.AvgMs = average(samples)
+	}
+	result.P95Ms = percentile95(samples)
+	result.JitterMs = jitter(samples)
 
 	return result
 }
@@ -141,4 +154,82 @@ func parseNumberBetween(line, left, right string) (float64, error) {
 		segment = strings.TrimSpace(segment[:len(segment)-2])
 	}
 	return strconv.ParseFloat(segment, 64)
+}
+
+func extractPingSamples(raw string) []float64 {
+	matches := pingTimeRe.FindAllStringSubmatch(raw, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	samples := make([]float64, 0, len(matches))
+	for _, m := range matches {
+		if len(m) < 2 {
+			continue
+		}
+		v, err := strconv.ParseFloat(m[1], 64)
+		if err != nil {
+			continue
+		}
+		samples = append(samples, v)
+	}
+	return samples
+}
+
+func average(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	var sum float64
+	for _, v := range values {
+		sum += v
+	}
+	return sum / float64(len(values))
+}
+
+func percentile95(values []float64) float64 {
+	n := len(values)
+	if n == 0 {
+		return 0
+	}
+	sorted := make([]float64, n)
+	copy(sorted, values)
+	sort.Float64s(sorted)
+	idx := int(math.Ceil(0.95*float64(n))) - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= n {
+		idx = n - 1
+	}
+	return sorted[idx]
+}
+
+func jitter(values []float64) float64 {
+	if len(values) < 2 {
+		return 0
+	}
+	deltas := make([]float64, 0, len(values)-1)
+	prev := values[0]
+	for _, sample := range values[1:] {
+		deltas = append(deltas, sample-prev)
+		prev = sample
+	}
+	if len(deltas) == 0 {
+		return 0
+	}
+	var sum float64
+	for _, d := range deltas {
+		sum += d
+	}
+	mean := sum / float64(len(deltas))
+	var variance float64
+	for _, d := range deltas {
+		diff := d - mean
+		variance += diff * diff
+	}
+	variance /= float64(len(deltas))
+	if variance < 0 {
+		variance = 0
+	}
+	return math.Sqrt(variance)
 }

@@ -73,9 +73,9 @@
 
   <h2>Connectivity Checks</h2>
   <table>
-    <tr><th>Check</th><th>Target</th><th>Avg (ms)</th><th>Loss</th><th>Jitter (ms)</th></tr>
-    <tr><td>Gateway Ping</td><td>{{ if .HasGateway }}{{ .GatewayUsed }}{{ else }}(n/a){{ end }}</td><td>{{ printf "%.1f" .GwPing.AvgMs }}</td><td>{{ .GwLossPct }}</td><td>{{ printf "%.1f" .GwJitterMs }}</td></tr>
-    <tr><td>WAN Ping</td><td>{{ .TargetHost }}</td><td>{{ printf "%.1f" .WanPing.AvgMs }}</td><td>{{ .WanLossPct }}</td><td>{{ printf "%.1f" .WanJitterMs }}</td></tr>
+    <tr><th>Check</th><th>Target</th><th>Avg (ms)</th><th>95th % (ms)</th><th>Loss</th><th>Jitter (ms)</th></tr>
+    <tr><td>Gateway Ping</td><td>{{ if .HasGateway }}{{ .GatewayUsed }}{{ else }}(n/a){{ end }}</td><td>{{ printf "%.1f" .GwPing.AvgMs }}</td><td>{{ printf "%.1f" .GwPing.P95Ms }}</td><td>{{ .GwLossPct }}</td><td>{{ printf "%.1f" .GwJitterMs }}</td></tr>
+    <tr><td>WAN Ping</td><td>{{ .TargetHost }}</td><td>{{ printf "%.1f" .WanPing.AvgMs }}</td><td>{{ printf "%.1f" .WanPing.P95Ms }}</td><td>{{ .WanLossPct }}</td><td>{{ printf "%.1f" .WanJitterMs }}</td></tr>
   </table>
 
   <h2>DNS</h2>
