@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/cneate93/vne/internal/logx"
 	"github.com/cneate93/vne/internal/probes"
 	"github.com/cneate93/vne/internal/report"
 	"github.com/cneate93/vne/internal/sshx"
@@ -50,6 +50,7 @@ func main() {
 	outFlag := flag.String("out", "", "Output HTML report path (default vne-report.html)")
 	skipPythonFlag := flag.Bool("skip-python", false, "Skip the optional FortiGate Python pack")
 	pythonFlag := flag.String("python", "", "Path to python executable for the FortiGate pack")
+	verboseFlag := flag.Bool("verbose", false, "Enable detailed logging to vne.log")
 	flag.Parse()
 
 	flagsSet := map[string]bool{}
@@ -58,7 +59,14 @@ func main() {
 	})
 	nonInteractive := flagsSet["target"] || flagsSet["out"] || flagsSet["skip-python"]
 
+	if err := logx.Init(*verboseFlag); err != nil {
+		fmt.Println("warning: unable to configure verbose logging:", err)
+	} else if *verboseFlag {
+		logx.Println("Verbose logging enabled")
+	}
+
 	fmt.Println("== Virtual Network Engineer (MVP) ==")
+	logx.Println("Starting run")
 
 	ctx := RunContext{
 		TargetHost: "1.1.1.1",
@@ -84,10 +92,11 @@ func main() {
 
 	if nonInteractive {
 		if !*skipPythonFlag {
-			log.Println("Skipping FortiGate Python pack in non-interactive mode; use interactive mode to supply credentials if needed.")
+			logx.Println("Skipping FortiGate Python pack in non-interactive mode; use interactive mode to supply credentials if needed.")
 		}
 	} else if *skipPythonFlag {
 		fmt.Println("→ Skipping FortiGate Python pack (requested via --skip-python).")
+		logx.Println("FortiGate Python pack skipped via flag")
 	} else if yesno("Do you want to run the FortiGate Python pack (optional)?") {
 		ctx.UsePythonFortigate = true
 		ctx.FortiHost = prompt("FortiGate host/IP: ")
@@ -111,12 +120,14 @@ func main() {
 	if *outFlag != "" {
 		outPath = *outFlag
 	}
+	logx.Printf("Report output path: %s", outPath)
 
 	// 1) Local network info
 	fmt.Println("\n→ Collecting local network info…")
+	logx.Println("Collecting local network info")
 	netInfo, err := probes.GetBasics()
 	if err != nil {
-		log.Println("netinfo error:", err)
+		logx.Printf("netinfo error: %v", err)
 	}
 
 	// Determine gateway & DNS we’ll use
@@ -124,37 +135,45 @@ func main() {
 	if gw == "" && len(netInfo.Gateways) > 0 {
 		gw = netInfo.Gateways[0]
 	}
+	logx.Printf("Default gateway selected: %s", gw)
 
 	// 2) Gateway ping
 	var gwPing probes.PingResult
 	if gw != "" {
 		fmt.Println("→ Pinging default gateway:", gw)
+		logx.Printf("Pinging default gateway %s", gw)
 		gwPing, _ = probes.PingHost(gw, 10)
 	} else {
 		fmt.Println("→ No default gateway detected; skipping gateway ping.")
+		logx.Println("Skipping gateway ping; no default gateway detected")
 	}
 
 	// 3) DNS lookups
 	fmt.Println("→ Testing DNS lookups…")
+	logx.Println("Testing DNS lookups")
 	dnsLocal, _ := probes.DNSLookupTimed("cloudflare.com", netInfo.DNSServers)
 	dnsCF, _ := probes.DNSLookupTimed("cloudflare.com", []string{"1.1.1.1"})
 
 	// 4) WAN ping/jitter
 	fmt.Println("→ Pinging internet target:", ctx.TargetHost)
+	logx.Printf("Pinging WAN target %s", ctx.TargetHost)
 	wanPing, _ := probes.PingHost(ctx.TargetHost, 20)
 
 	// 5) Trace
 	fmt.Println("→ Traceroute (this may take ~10–20 seconds)…")
+	logx.Println("Running traceroute")
 	traceOut, _ := probes.Trace(ctx.TargetHost, 20)
 
 	// 6) MTU probe
 	fmt.Println("→ MTU / Path MTU probe…")
+	logx.Println("Running MTU probe")
 	mtu, _ := probes.MTUCheck(ctx.TargetHost)
 
 	// 7) Optional FortiGate Python pack
 	var fortiRaw map[string]any
 	if ctx.UsePythonFortigate {
 		fmt.Println("→ Running FortiGate Python pack…")
+		logx.Println("Running FortiGate Python pack")
 		packDir := filepath.Join("packs", "python", "fortigate")
 		payload := map[string]any{
 			"host":     ctx.FortiHost,
@@ -167,10 +186,12 @@ func main() {
 		}
 		out, err := sshx.RunPythonPack(ctx.PythonPath, filepath.Join(packDir, "parser.py"), payload)
 		if err != nil {
-			log.Println("Forti pack error:", err)
+			logx.Printf("Forti pack error: %v", err)
 		} else {
 			_ = json.Unmarshal(out, &fortiRaw)
 		}
+	} else {
+		logx.Println("FortiGate Python pack not selected")
 	}
 
 	// 8) Findings / heuristics (simple)
@@ -220,9 +241,13 @@ func main() {
 		GatewayUsed: gw,
 	}
 
+	logx.Println("Rendering HTML report")
 	if err := report.RenderHTML(res, "assets/report_template.html", outPath); err != nil {
-		log.Fatal(err)
+		logx.Printf("Render error: %v", err)
+		fmt.Println("error: failed to write report:", err)
+		os.Exit(1)
 	}
+	logx.Println("Report rendered successfully")
 	fmt.Println("\n✅ Done. Report written to:", outPath)
 }
 
