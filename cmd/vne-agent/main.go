@@ -268,12 +268,7 @@ func main() {
 
 	if *jsonFlag != "" {
 		jsonPath := *jsonFlag
-		data, err := json.MarshalIndent(res, "", "  ")
-		if err != nil {
-			log.Fatalf("failed to marshal JSON results: %v", err)
-		}
-		data = append(data, '\n')
-		if err := os.WriteFile(jsonPath, data, 0o644); err != nil {
+		if err := writeJSONResults(jsonPath, res); err != nil {
 			log.Fatalf("failed to write JSON results: %v", err)
 		}
 		fmt.Println("→ JSON results written to:", jsonPath)
@@ -338,4 +333,26 @@ func main() {
 
 func isWindows() bool {
 	return runtime.GOOS == "windows"
+}
+
+func writeJSONResults(jsonPath string, res report.Results) error {
+	if dir := filepath.Dir(jsonPath); dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create directory %s: %w", dir, err)
+		}
+	}
+
+	f, err := os.Create(jsonPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(res); err != nil {
+		return err
+	}
+
+	return nil
 }
