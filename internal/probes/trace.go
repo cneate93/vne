@@ -1,6 +1,8 @@
 package probes
 
 import (
+	"errors"
+	"fmt"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -31,6 +33,22 @@ func Trace(target string, maxHops int) (TraceResult, error) {
 
 	out, err := cmd.CombinedOutput()
 	result := TraceResult{Raw: string(out)}
+	if err != nil && runtime.GOOS == "windows" {
+		trimmed := strings.TrimSpace(result.Raw)
+		switch {
+		case errors.Is(err, exec.ErrNotFound):
+			result.Raw = "tracert command not found on Windows; unable to run traceroute."
+		case trimmed != "":
+			result.Raw = trimmed
+		default:
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				result.Raw = fmt.Sprintf("tracert exited with code %d and produced no output.", exitErr.ExitCode())
+			} else {
+				result.Raw = fmt.Sprintf("failed to run tracert: %v", err)
+			}
+		}
+	}
 	if err != nil {
 		return result, err
 	}
