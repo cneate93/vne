@@ -50,6 +50,54 @@ h1 {
         font-size: 0.95rem;
 }
 
+.table-responsive {
+        width: 100%;
+        overflow-x: auto;
+}
+
+.data-table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 480px;
+}
+
+.data-table th,
+.data-table td {
+        text-align: left;
+        padding: 0.6rem 0.75rem;
+        border-bottom: 1px solid #e2e8f0;
+        font-size: 0.95rem;
+}
+
+.data-table th {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #64748b;
+        background: rgba(148, 163, 184, 0.15);
+}
+
+.data-table tbody tr:last-child td {
+        border-bottom: none;
+}
+
+.mono {
+        font-family: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+        font-size: 0.9rem;
+}
+
+.sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+}
+
 .metric-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));

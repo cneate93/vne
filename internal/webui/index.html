@@ -84,6 +84,24 @@
                         </div>
                 </section>
 
+                <section class="card" id="devices-card" hidden>
+                        <h2>Discovered Devices (L2)</h2>
+                        <div class="table-responsive">
+                                <table class="data-table" aria-describedby="devices-caption">
+                                        <caption id="devices-caption" class="sr-only">Layer-2 devices found during the scan</caption>
+                                        <thead>
+                                                <tr>
+                                                        <th scope="col">Interface</th>
+                                                        <th scope="col">IP</th>
+                                                        <th scope="col">MAC</th>
+                                                        <th scope="col">Vendor</th>
+                                                </tr>
+                                        </thead>
+                                        <tbody id="devices-body"></tbody>
+                                </table>
+                        </div>
+                </section>
+
                 <section class="card">
                         <h2>Console</h2>
                         <div id="console" class="console" aria-live="polite" aria-atomic="false">

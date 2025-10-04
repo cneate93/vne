@@ -19,6 +19,8 @@
         const wanAvg = document.getElementById('wan-avg');
         const wanP95 = document.getElementById('wan-p95');
         const wanJitter = document.getElementById('wan-jitter');
+        const devicesCard = document.getElementById('devices-card');
+        const devicesBody = document.getElementById('devices-body');
 
         const PHASE_LABELS = {
                 idle: 'Idle',
@@ -75,19 +77,23 @@
                         if (resp.status === 204) {
                                 resultsEl.textContent = '(Results not available yet)';
                                 populatePerformanceCards(null);
+                                populateDevicesTable(null);
                                 return;
                         }
                         if (!resp.ok) {
                                 resultsEl.textContent = '(Results not available yet)';
+                                populateDevicesTable(null);
                                 return;
                         }
                         const data = await resp.json();
                         resultsEl.textContent = JSON.stringify(data, null, 2);
                         populatePerformanceCards(data);
+                        populateDevicesTable(data && Array.isArray(data.discovered) ? data.discovered : null);
                 } catch (err) {
                         console.error(err);
                         resultsEl.textContent = '(Unable to load results)';
                         populatePerformanceCards(null);
+                        populateDevicesTable(null);
                 }
         }
 
@@ -121,6 +127,7 @@
                         statusMessage.textContent = 'Starting diagnostics…';
                         applyPhase('starting');
                         setProgress(5);
+                        clearDevicesTable();
                 } catch (err) {
                         console.error(err);
                         startError.textContent = 'Unexpected error starting diagnostics.';
@@ -219,6 +226,7 @@
                 } else if (data.status === 'error') {
                         resultsEl.textContent = '(Run failed)';
                         populatePerformanceCards(null);
+                        populateDevicesTable(null);
                 }
         }
 
@@ -259,6 +267,62 @@
                                 data && data.target_host ? data.target_host : '(unknown)'
                         );
                 }
+        }
+
+        function clearDevicesTable() {
+                if (!devicesCard) {
+                        return;
+                }
+                devicesCard.hidden = true;
+                if (devicesBody) {
+                        devicesBody.innerHTML = '';
+                }
+        }
+
+        function populateDevicesTable(hosts) {
+                if (!devicesCard || !devicesBody) {
+                        return;
+                }
+                devicesBody.innerHTML = '';
+                const list = Array.isArray(hosts) ? hosts.filter(Boolean) : [];
+                if (list.length === 0) {
+                        devicesCard.hidden = true;
+                        return;
+                }
+                const sorted = [...list].sort((a, b) => {
+                        const ifaceA = (a.if_name || '').toLowerCase();
+                        const ifaceB = (b.if_name || '').toLowerCase();
+                        if (ifaceA !== ifaceB) {
+                                return ifaceA.localeCompare(ifaceB);
+                        }
+                        const ipA = a.ip || '';
+                        const ipB = b.ip || '';
+                        return ipA.localeCompare(ipB, undefined, { numeric: true });
+                });
+                for (const host of sorted) {
+                        const row = document.createElement('tr');
+                        const ifaceCell = document.createElement('td');
+                        ifaceCell.textContent = host.if_name || '—';
+                        row.appendChild(ifaceCell);
+
+                        const ipCell = document.createElement('td');
+                        ipCell.textContent = host.ip || '—';
+                        ipCell.classList.add('mono');
+                        row.appendChild(ipCell);
+
+                        const macCell = document.createElement('td');
+                        const macText = typeof host.mac === 'string' ? host.mac.toUpperCase() : '—';
+                        macCell.textContent = macText || '—';
+                        macCell.classList.add('mono');
+                        row.appendChild(macCell);
+
+                        const vendorCell = document.createElement('td');
+                        vendorCell.textContent = host.vendor || '—';
+                        row.appendChild(vendorCell);
+
+                        devicesBody.appendChild(row);
+                }
+                devicesCard.hidden = false;
         }
 
         function updatePerformanceCard(card, destEl, avgEl, p95El, jitterEl, ping, fallbackJitter, destination) {

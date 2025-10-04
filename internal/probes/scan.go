@@ -33,7 +33,10 @@ type scanTarget struct {
 // subnets for each active interface with a private IPv4 address. The sweep is
 // bounded by the provided guardrails (timeout, host budget, and CIDR limit) and
 // then parses the system ARP cache to return discovered hosts.
-func L2Scan(timeout time.Duration, maxHosts int, cidrLimit int) ([]L2Host, error) {
+func L2Scan(ctx context.Context, timeout time.Duration, maxHosts int, cidrLimit int) ([]L2Host, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if maxHosts <= 0 {
 		maxHosts = 256
 	}
@@ -53,6 +56,10 @@ func L2Scan(timeout time.Duration, maxHosts int, cidrLimit int) ([]L2Host, error
 		return []L2Host{}, fmt.Errorf("arp command not found: %w", err)
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return []L2Host{}, fmt.Errorf("list interfaces: %w", err)
@@ -63,6 +70,9 @@ func L2Scan(timeout time.Duration, maxHosts int, cidrLimit int) ([]L2Host, error
 	for _, iface := range interfaces {
 		if remaining <= 0 {
 			break
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
@@ -75,6 +85,9 @@ func L2Scan(timeout time.Duration, maxHosts int, cidrLimit int) ([]L2Host, error
 			continue
 		}
 		for _, addr := range addrs {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if remaining <= 0 {
 				break
 			}
@@ -124,6 +137,9 @@ func L2Scan(timeout time.Duration, maxHosts int, cidrLimit int) ([]L2Host, error
 	var toPing []string
 	for _, t := range targets {
 		for _, ip := range t.Hosts {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if ip == t.LocalIP.String() {
 				continue
 			}
@@ -149,32 +165,57 @@ func L2Scan(timeout time.Duration, maxHosts int, cidrLimit int) ([]L2Host, error
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				for ip := range jobs {
-					_ = runPing(pingPath, ip, timeout)
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case ip, ok := <-jobs:
+						if !ok {
+							return
+						}
+						_ = runPing(ctx, pingPath, ip, timeout)
+					}
 				}
 			}()
 		}
 		for _, ip := range toPing {
-			jobs <- ip
+			select {
+			case <-ctx.Done():
+				close(jobs)
+				wg.Wait()
+				return nil, ctx.Err()
+			case jobs <- ip:
+			}
 		}
 		close(jobs)
 		wg.Wait()
 	}
 
-	arpOut, err := exec.Command(arpPath, "-a").CombinedOutput()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	arpCmd := exec.CommandContext(ctx, arpPath, "-a")
+	arpOut, err := arpCmd.CombinedOutput()
 	if err != nil {
 		return []L2Host{}, fmt.Errorf("execute arp -a: %w", err)
 	}
 
 	hosts := parseARP(string(arpOut), targets)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return hosts, nil
 }
 
-func runPing(pingPath, ip string, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout+time.Second)
+func runPing(ctx context.Context, pingPath, ip string, timeout time.Duration) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	pingCtx, cancel := context.WithTimeout(ctx, timeout+time.Second)
 	defer cancel()
 	args := pingArgs(ip, timeout)
-	cmd := exec.CommandContext(ctx, pingPath, args...)
+	cmd := exec.CommandContext(pingCtx, pingPath, args...)
 	return cmd.Run()
 }
 
