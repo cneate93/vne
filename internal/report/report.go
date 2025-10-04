@@ -1,14 +1,15 @@
 package report
 
 import (
-        "bytes"
-        _ "embed"
+	"bytes"
+	_ "embed"
 	"fmt"
 	"html/template"
 	"os"
 	"time"
 
 	"github.com/cneate93/vne/internal/probes"
+	"github.com/cneate93/vne/internal/snmp"
 )
 
 //go:embed report_template.html
@@ -20,22 +21,23 @@ type Finding struct {
 }
 
 type Results struct {
-	When        time.Time          `json:"when"`
-	UserNote    string             `json:"user_note"`
-	NetInfo     probes.NetInfo     `json:"net_info"`
-	GwPing      probes.PingResult  `json:"gw_ping"`
-	WanPing     probes.PingResult  `json:"wan_ping"`
-	DNSLocal    probes.DNSResult   `json:"dns_local"`
-	DNSCF       probes.DNSResult   `json:"dns_cf"`
-	Trace       probes.TraceResult `json:"trace"`
-	MTU         probes.MTUResult   `json:"mtu"`
-	Findings    []Finding          `json:"findings"`
-	FortiRaw    any                `json:"forti_raw,omitempty"`
-	GwLossPct   string             `json:"gw_loss_pct"`
-	WanLossPct  string             `json:"wan_loss_pct"`
-	TargetHost  string             `json:"target_host"`
-	HasGateway  bool               `json:"has_gateway"`
-	GatewayUsed string             `json:"gateway_used"`
+	When        time.Time             `json:"when"`
+	UserNote    string                `json:"user_note"`
+	NetInfo     probes.NetInfo        `json:"net_info"`
+	GwPing      probes.PingResult     `json:"gw_ping"`
+	WanPing     probes.PingResult     `json:"wan_ping"`
+	DNSLocal    probes.DNSResult      `json:"dns_local"`
+	DNSCF       probes.DNSResult      `json:"dns_cf"`
+	Trace       probes.TraceResult    `json:"trace"`
+	MTU         probes.MTUResult      `json:"mtu"`
+	Findings    []Finding             `json:"findings"`
+	FortiRaw    any                   `json:"forti_raw,omitempty"`
+	IfaceHealth *snmp.InterfaceHealth `json:"iface_health,omitempty"`
+	GwLossPct   string                `json:"gw_loss_pct"`
+	WanLossPct  string                `json:"wan_loss_pct"`
+	TargetHost  string                `json:"target_host"`
+	HasGateway  bool                  `json:"has_gateway"`
+	GatewayUsed string                `json:"gateway_used"`
 }
 
 func RenderHTML(r Results, tmplPath, outPath string) error {
@@ -50,6 +52,7 @@ func RenderHTML(r Results, tmplPath, outPath string) error {
 		"ms1": func(v float64) string {
 			return fmt.Sprintf("%.1f ms", v)
 		},
+		"humanSpeed": humanSpeed,
 	}
 	tpl, err := template.New("rep").Funcs(funcMap).Parse(string(tplBytes))
 	if err != nil {
@@ -60,4 +63,21 @@ func RenderHTML(r Results, tmplPath, outPath string) error {
 		return err
 	}
 	return os.WriteFile(outPath, buf.Bytes(), 0644)
+}
+
+func humanSpeed(bps uint64) string {
+	if bps == 0 {
+		return "0 bps"
+	}
+	units := []string{"bps", "Kbps", "Mbps", "Gbps", "Tbps"}
+	value := float64(bps)
+	unitIdx := 0
+	for value >= 1000 && unitIdx < len(units)-1 {
+		value /= 1000
+		unitIdx++
+	}
+	if value >= 10 || unitIdx == 0 {
+		return fmt.Sprintf("%.0f %s", value, units[unitIdx])
+	}
+	return fmt.Sprintf("%.1f %s", value, units[unitIdx])
 }

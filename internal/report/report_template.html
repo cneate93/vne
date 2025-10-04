@@ -57,6 +57,20 @@
     {{ end }}
   </table>
 
+  {{ if .IfaceHealth }}
+  <h2>SNMP Interface Health</h2>
+  <table>
+    <tr><th>Interface</th><td>{{ .IfaceHealth.Name }}</td></tr>
+    <tr><th>Index</th><td>{{ .IfaceHealth.Index }}</td></tr>
+    <tr><th>Status</th><td>{{ .IfaceHealth.OperStatus }}</td></tr>
+    <tr><th>Speed</th><td>{{ humanSpeed .IfaceHealth.SpeedBps }}</td></tr>
+    <tr><th>Input Errors</th><td>{{ .IfaceHealth.InErrors }}</td></tr>
+    <tr><th>Output Errors</th><td>{{ .IfaceHealth.OutErrors }}</td></tr>
+    <tr><th>Input Discards</th><td>{{ .IfaceHealth.InDiscards }}</td></tr>
+    <tr><th>Output Discards</th><td>{{ .IfaceHealth.OutDiscards }}</td></tr>
+  </table>
+  {{ end }}
+
   <h2>Connectivity Checks</h2>
   <table>
     <tr><th>Check</th><th>Target</th><th>Avg</th><th>Loss</th></tr>
