@@ -59,16 +59,16 @@
 
   <h2>Connectivity Checks</h2>
   <table>
-    <tr><th>Check</th><th>Target</th><th>Avg (ms)</th><th>Loss</th></tr>
-    <tr><td>Gateway Ping</td><td>{{ if .HasGateway }}{{ .GatewayUsed }}{{ else }}(n/a){{ end }}</td><td>{{ printf "%.1f" .GwPing.AvgMs }}</td><td>{{ .GwLossPct }}</td></tr>
-    <tr><td>WAN Ping</td><td>{{ .TargetHost }}</td><td>{{ printf "%.1f" .WanPing.AvgMs }}</td><td>{{ .WanLossPct }}</td></tr>
+    <tr><th>Check</th><th>Target</th><th>Avg</th><th>Loss</th></tr>
+    <tr><td>Gateway Ping</td><td>{{ if .HasGateway }}{{ .GatewayUsed }}{{ else }}(n/a){{ end }}</td><td>{{ ms1 .GwPing.AvgMs }}</td><td>{{ pct .GwPing.Loss }}</td></tr>
+    <tr><td>WAN Ping</td><td>{{ .TargetHost }}</td><td>{{ ms1 .WanPing.AvgMs }}</td><td>{{ pct .WanPing.Loss }}</td></tr>
   </table>
 
   <h2>DNS</h2>
   <table>
-    <tr><th>Path</th><th>Avg (ms)</th><th>Answers</th></tr>
-    <tr><td>System resolvers</td><td>{{ printf "%.0f" .DNSLocal.AvgMs }}</td><td>{{ range $i, $v := .DNSLocal.Answers }}{{ if $i }}, {{ end }}{{ $v }}{{ end }}</td></tr>
-    <tr><td>1.1.1.1</td><td>{{ printf "%.0f" .DNSCF.AvgMs }}</td><td>{{ range $i, $v := .DNSCF.Answers }}{{ if $i }}, {{ end }}{{ $v }}{{ end }}</td></tr>
+    <tr><th>Path</th><th>Avg</th><th>Answers</th></tr>
+    <tr><td>System resolvers</td><td>{{ ms1 .DNSLocal.AvgMs }}</td><td>{{ range $i, $v := .DNSLocal.Answers }}{{ if $i }}, {{ end }}{{ $v }}{{ end }}</td></tr>
+    <tr><td>1.1.1.1</td><td>{{ ms1 .DNSCF.AvgMs }}</td><td>{{ range $i, $v := .DNSCF.Answers }}{{ if $i }}, {{ end }}{{ $v }}{{ end }}</td></tr>
   </table>
 
   <h2>Path MTU</h2>

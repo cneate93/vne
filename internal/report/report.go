@@ -2,6 +2,7 @@ package report
 
 import (
 	"bytes"
+	"fmt"
 	"html/template"
 	"os"
 	"time"
@@ -41,7 +42,15 @@ func RenderHTML(r Results, tmplPath, outPath string) error {
 	if err != nil {
 		tplBytes = []byte(defaultReportTemplate)
 	}
-	tpl, err := template.New("rep").Parse(string(tplBytes))
+	funcMap := template.FuncMap{
+		"pct": func(v float64) string {
+			return fmt.Sprintf("%.0f%%", v*100)
+		},
+		"ms1": func(v float64) string {
+			return fmt.Sprintf("%.1f ms", v)
+		},
+	}
+	tpl, err := template.New("rep").Funcs(funcMap).Parse(string(tplBytes))
 	if err != nil {
 		return err
 	}
