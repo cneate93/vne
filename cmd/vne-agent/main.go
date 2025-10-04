@@ -227,6 +227,17 @@ func main() {
 			Message:  fmt.Sprintf("Path MTU appears to be %d. If VPN/tunnel is in path, lower MTU or enable TCP MSS clamping.", mtu.PathMTU),
 		})
 	}
+	vpnAdapters := netInfo.VPNAdapterNames()
+	if len(vpnAdapters) > 0 && (mtu.PathMTU == 0 || mtu.PathMTU < 1500) {
+		mtuPhrase := "Path MTU probe was inconclusive"
+		if mtu.PathMTU > 0 {
+			mtuPhrase = fmt.Sprintf("Path MTU reported as %d", mtu.PathMTU)
+		}
+		findings = append(findings, report.Finding{
+			Severity: "info",
+			Message:  fmt.Sprintf("%s with active VPN/tunnel adapter (%s). Set tunnel MTU to 1420–1412 and enable TCP MSS clamping to avoid fragmentation.", mtuPhrase, strings.Join(vpnAdapters, ", ")),
+		})
+	}
 
 	// 9) Assemble report (pre-format loss % strings to keep template simple)
 	res := report.Results{
