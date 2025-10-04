@@ -42,6 +42,20 @@
         const ciscoSecretInput = document.getElementById('cisco-secret');
         const ciscoPortInput = document.getElementById('cisco-port');
         const bundleBtn = document.getElementById('download-bundle');
+        const historyList = document.getElementById('history-list');
+        const historyEmpty = document.getElementById('history-empty');
+        const historyCompare = document.getElementById('history-compare');
+        const compareLabel = document.getElementById('compare-label');
+        const clearCompareBtn = document.getElementById('clear-compare');
+        const compareCard = document.getElementById('compare-card');
+        const compareSummary = document.getElementById('compare-summary');
+        const compareGwLoss = document.getElementById('compare-gw-loss');
+        const compareGwRtt = document.getElementById('compare-gw-rtt');
+        const compareGwJitter = document.getElementById('compare-gw-jitter');
+        const compareWanLoss = document.getElementById('compare-wan-loss');
+        const compareWanRtt = document.getElementById('compare-wan-rtt');
+        const compareWanJitter = document.getElementById('compare-wan-jitter');
+        const compareMtu = document.getElementById('compare-mtu');
 
         const PHASE_LABELS = {
                 idle: 'Idle',
@@ -63,6 +77,15 @@
         let eventSource = null;
         let lastVendorSuggestions = [];
         let vendorPromptShown = false;
+        let displayedResults = null;
+        let displayedRunId = null;
+        let latestRunId = null;
+        let compareResults = null;
+        let compareRunId = null;
+        let historyEntries = [];
+        const historyCache = new Map();
+
+        const MINUS = '\u2212';
 
         function ensureStream() {
                 if (eventSource) {
@@ -98,34 +121,445 @@
                 try {
                         const resp = await fetch('/api/results');
                         if (resp.status === 204) {
-                                resultsEl.textContent = '(Results not available yet)';
-                                populatePerformanceCards(null);
-                                populateDevicesTable(null);
-                                populateVendorCard(null);
-                                setBundleAvailability(false);
+                                applyRunData(null, { message: '(Results not available yet)', allowBundle: false });
+                                await refreshHistory();
                                 return;
                         }
                         if (!resp.ok) {
-                                resultsEl.textContent = '(Results not available yet)';
-                                populateDevicesTable(null);
-                                populateVendorCard(null);
-                                setBundleAvailability(false);
-                                return;
+                                throw new Error('Results request failed');
                         }
                         const data = await resp.json();
-                        resultsEl.textContent = JSON.stringify(data, null, 2);
-                        populatePerformanceCards(data);
-                        populateDevicesTable(data && Array.isArray(data.discovered) ? data.discovered : null);
-                        populateVendorCard(data);
-                        setBundleAvailability(true);
+                        const runId = typeof data.history_id === 'string' && data.history_id.trim() !== '' ? data.history_id.trim() : null;
+                        if (runId) {
+                                historyCache.set(runId, data);
+                                latestRunId = runId;
+                        }
+                        applyRunData(data, { runId, allowBundle: !runId || runId === latestRunId });
+                        await refreshHistory();
                 } catch (err) {
                         console.error(err);
-                        resultsEl.textContent = '(Unable to load results)';
-                        populatePerformanceCards(null);
-                        populateDevicesTable(null);
-                        populateVendorCard(null);
-                        setBundleAvailability(false);
+                        applyRunData(null, { message: '(Unable to load results)', allowBundle: false });
                 }
+        }
+
+        function applyRunData(data, { runId = null, message = '', allowBundle } = {}) {
+                displayedResults = data || null;
+                displayedRunId = runId || null;
+                if (resultsEl) {
+                        if (data) {
+                                resultsEl.textContent = JSON.stringify(data, null, 2);
+                        } else if (message) {
+                                resultsEl.textContent = message;
+                        } else {
+                                resultsEl.textContent = '(Results not available yet)';
+                        }
+                }
+                populatePerformanceCards(data);
+                populateDevicesTable(data && Array.isArray(data.discovered) ? data.discovered : null);
+                populateVendorCard(data);
+                if (typeof allowBundle === 'boolean') {
+                        setBundleAvailability(allowBundle);
+                } else if (runId) {
+                        setBundleAvailability(runId === latestRunId);
+                } else {
+                        setBundleAvailability(!!data);
+                }
+                updateCompareCard();
+                updateHistorySelection();
+        }
+
+        async function refreshHistory() {
+                if (!historyList) {
+                        return;
+                }
+                try {
+                        const resp = await fetch('/api/history');
+                        if (!resp.ok) {
+                                throw new Error('History request failed');
+                        }
+                        const data = await resp.json();
+                        if (Array.isArray(data)) {
+                                historyEntries = data;
+                        } else {
+                                historyEntries = [];
+                        }
+                        renderHistory(historyEntries);
+                } catch (err) {
+                        console.error(err);
+                }
+        }
+
+        function renderHistory(entries) {
+                if (!historyList) {
+                        return;
+                }
+                historyList.innerHTML = '';
+                const list = Array.isArray(entries) ? entries.filter((entry) => entry && entry.id) : [];
+                if (historyEmpty) {
+                        historyEmpty.hidden = list.length > 0;
+                }
+                if (list.length === 0) {
+                        updateHistorySelection();
+                        return;
+                }
+                const fragment = document.createDocumentFragment();
+                for (const entry of list) {
+                        const li = document.createElement('li');
+                        li.className = 'history-item';
+                        li.dataset.runId = entry.id;
+
+                        const selectBtn = document.createElement('button');
+                        selectBtn.type = 'button';
+                        selectBtn.className = 'history-select';
+                        selectBtn.dataset.action = 'select-run';
+                        selectBtn.dataset.runId = entry.id;
+
+                        const timeSpan = document.createElement('span');
+                        timeSpan.className = 'history-run-time';
+                        timeSpan.textContent = formatHistoryTime(entry.when);
+                        selectBtn.appendChild(timeSpan);
+
+                        const targetSpan = document.createElement('span');
+                        targetSpan.className = 'history-run-target';
+                        targetSpan.textContent = entry.target && entry.target.trim() !== '' ? entry.target : '(unknown target)';
+                        selectBtn.appendChild(targetSpan);
+
+                        if (entry.classification && entry.classification.trim() !== '') {
+                                const classificationSpan = document.createElement('span');
+                                classificationSpan.className = 'history-run-classification';
+                                classificationSpan.textContent = entry.classification.trim();
+                                selectBtn.appendChild(classificationSpan);
+                        }
+
+                        li.appendChild(selectBtn);
+
+                        const compareBtn = document.createElement('button');
+                        compareBtn.type = 'button';
+                        compareBtn.className = 'history-compare-btn';
+                        compareBtn.dataset.action = 'compare-run';
+                        compareBtn.dataset.runId = entry.id;
+                        compareBtn.textContent = 'Compare';
+                        li.appendChild(compareBtn);
+
+                        fragment.appendChild(li);
+                }
+                historyList.appendChild(fragment);
+                updateHistorySelection();
+        }
+
+        function updateHistorySelection() {
+                if (historyEmpty) {
+                        const hasEntries = Array.isArray(historyEntries) && historyEntries.length > 0;
+                        historyEmpty.hidden = hasEntries;
+                }
+                if (historyList) {
+                        const items = historyList.querySelectorAll('.history-item');
+                        items.forEach((item) => {
+                                const runId = item.dataset.runId || '';
+                                const isActive = displayedRunId && runId === displayedRunId;
+                                const isCompare = compareRunId && runId === compareRunId;
+                                item.classList.toggle('is-active', Boolean(isActive));
+                                item.classList.toggle('is-compare', Boolean(isCompare));
+                                const compareBtn = item.querySelector('.history-compare-btn');
+                                if (compareBtn) {
+                                        compareBtn.textContent = isCompare ? 'Selected' : 'Compare';
+                                }
+                        });
+                }
+                if (historyCompare && compareLabel) {
+                        if (compareRunId) {
+                                historyCompare.hidden = false;
+                                compareLabel.textContent = formatHistoryLabel(compareRunId, compareResults);
+                        } else {
+                                historyCompare.hidden = true;
+                                compareLabel.textContent = '';
+                        }
+                }
+        }
+
+        function formatHistoryTime(value) {
+                if (!value) {
+                        return 'Unknown time';
+                }
+                const date = new Date(value);
+                if (Number.isNaN(date.getTime())) {
+                        return String(value);
+                }
+                const now = new Date();
+                const options = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+                if (date.getFullYear() !== now.getFullYear()) {
+                        options.year = 'numeric';
+                }
+                return new Intl.DateTimeFormat(undefined, options).format(date);
+        }
+
+        function formatHistoryLabel(runId, result) {
+                const trimmed = typeof runId === 'string' ? runId.trim() : '';
+                if (trimmed) {
+                        const fromList = Array.isArray(historyEntries)
+                                ? historyEntries.find((entry) => entry && entry.id === trimmed)
+                                : null;
+                        if (fromList && fromList.when) {
+                                return formatHistoryTime(fromList.when);
+                        }
+                        const cached = historyCache.get(trimmed) || result;
+                        if (cached && cached.when) {
+                                return formatHistoryTime(cached.when);
+                        }
+                        return trimmed;
+                }
+                if (result && result.when) {
+                        return formatHistoryTime(result.when);
+                }
+                return 'Current run';
+        }
+
+        async function loadHistoryRun(runId) {
+                const trimmed = typeof runId === 'string' ? runId.trim() : '';
+                if (trimmed === '') {
+                        return null;
+                }
+                if (historyCache.has(trimmed)) {
+                        return historyCache.get(trimmed);
+                }
+                const resp = await fetch(`/api/run/${encodeURIComponent(trimmed)}`);
+                if (resp.status === 404) {
+                        await refreshHistory();
+                        return null;
+                }
+                if (!resp.ok) {
+                        throw new Error('Run request failed');
+                }
+                const data = await resp.json();
+                historyCache.set(trimmed, data);
+                return data;
+        }
+
+        async function selectHistoryRun(runId) {
+                const trimmed = typeof runId === 'string' ? runId.trim() : '';
+                if (trimmed === '') {
+                        return;
+                }
+                try {
+                        const data = await loadHistoryRun(trimmed);
+                        if (!data) {
+                                if (resultsEl) {
+                                        resultsEl.textContent = '(Run not found)';
+                                }
+                                updateCompareCard();
+                                updateHistorySelection();
+                                return;
+                        }
+                        historyCache.set(trimmed, data);
+                        applyRunData(data, { runId: trimmed, allowBundle: trimmed === latestRunId });
+                } catch (err) {
+                        console.error(err);
+                        if (resultsEl) {
+                                resultsEl.textContent = '(Unable to load run)';
+                        }
+                        updateCompareCard();
+                        updateHistorySelection();
+                }
+        }
+
+        async function toggleCompare(runId) {
+                const trimmed = typeof runId === 'string' ? runId.trim() : '';
+                if (trimmed === '') {
+                        return;
+                }
+                if (compareRunId === trimmed) {
+                        setCompareResults(null, null);
+                        return;
+                }
+                try {
+                        const data = await loadHistoryRun(trimmed);
+                        if (!data) {
+                                setCompareResults(null, null);
+                                return;
+                        }
+                        historyCache.set(trimmed, data);
+                        setCompareResults(data, trimmed);
+                } catch (err) {
+                        console.error(err);
+                }
+        }
+
+        function setCompareResults(data, runId) {
+                if (data && runId) {
+                        compareRunId = runId;
+                        compareResults = data;
+                        historyCache.set(runId, data);
+                } else {
+                        compareRunId = null;
+                        compareResults = null;
+                }
+                updateCompareCard();
+                updateHistorySelection();
+        }
+
+        function updateCompareCard() {
+                if (!compareCard) {
+                        if (historyCompare && compareLabel) {
+                                if (compareRunId) {
+                                        historyCompare.hidden = false;
+                                        compareLabel.textContent = formatHistoryLabel(compareRunId, compareResults);
+                                } else {
+                                        historyCompare.hidden = true;
+                                        compareLabel.textContent = '';
+                                }
+                        }
+                        return;
+                }
+                if (!displayedResults || !compareResults || !compareRunId) {
+                        compareCard.hidden = true;
+                        if (historyCompare && compareLabel) {
+                                if (compareRunId) {
+                                        historyCompare.hidden = false;
+                                        compareLabel.textContent = formatHistoryLabel(compareRunId, compareResults);
+                                } else {
+                                        historyCompare.hidden = true;
+                                        compareLabel.textContent = '';
+                                }
+                        }
+                        return;
+                }
+                compareCard.hidden = false;
+                if (compareSummary) {
+                        const primaryLabel = formatHistoryLabel(displayedRunId, displayedResults);
+                        const secondaryLabel = formatHistoryLabel(compareRunId, compareResults);
+                        compareSummary.textContent = `${primaryLabel} vs ${secondaryLabel}`;
+                }
+                setLossDelta(compareGwLoss, displayedResults ? displayedResults.gw_ping : null, compareResults ? compareResults.gw_ping : null);
+                setMsDelta(compareGwRtt, displayedResults ? displayedResults.gw_ping : null, compareResults ? compareResults.gw_ping : null, 'avg_ms');
+                setMsDelta(compareGwJitter, displayedResults ? displayedResults.gw_ping : null, compareResults ? compareResults.gw_ping : null, 'jitter_ms');
+                setLossDelta(compareWanLoss, displayedResults ? displayedResults.wan_ping : null, compareResults ? compareResults.wan_ping : null);
+                setMsDelta(compareWanRtt, displayedResults ? displayedResults.wan_ping : null, compareResults ? compareResults.wan_ping : null, 'avg_ms');
+                setMsDelta(compareWanJitter, displayedResults ? displayedResults.wan_ping : null, compareResults ? compareResults.wan_ping : null, 'jitter_ms');
+                setMtuDelta(compareMtu, displayedResults ? displayedResults.mtu : null, compareResults ? compareResults.mtu : null);
+                if (historyCompare && compareLabel) {
+                        historyCompare.hidden = false;
+                        compareLabel.textContent = formatHistoryLabel(compareRunId, compareResults);
+                }
+        }
+
+        function setLossDelta(element, primaryPing, referencePing) {
+                if (!element) {
+                        return;
+                }
+                const primary = getLossPercent(primaryPing);
+                const reference = getLossPercent(referencePing);
+                element.textContent = formatDelta(primary, reference, formatPercentValue, formatPercentDelta);
+        }
+
+        function setMsDelta(element, primaryPing, referencePing, key) {
+                if (!element) {
+                        return;
+                }
+                const primary = getPingMetric(primaryPing, key);
+                const reference = getPingMetric(referencePing, key);
+                element.textContent = formatDelta(primary, reference, formatMsValue, formatMsDelta);
+        }
+
+        function setMtuDelta(element, primaryMtu, referenceMtu) {
+                if (!element) {
+                        return;
+                }
+                const primary = extractMtuValue(primaryMtu);
+                const reference = extractMtuValue(referenceMtu);
+                if (!Number.isFinite(primary)) {
+                        element.textContent = '—';
+                        return;
+                }
+                const baseText = `${Math.round(primary)} bytes`;
+                if (!Number.isFinite(reference)) {
+                        element.textContent = `${baseText} (Δ n/a)`;
+                        return;
+                }
+                const delta = primary - reference;
+                if (delta === 0) {
+                        element.textContent = `${baseText} (Δ 0 bytes)`;
+                        return;
+                }
+                const sign = delta > 0 ? '+' : MINUS;
+                element.textContent = `${baseText} (Δ ${sign}${Math.abs(delta)} bytes)`;
+        }
+
+        function getLossPercent(ping) {
+                if (!ping || typeof ping.loss !== 'number') {
+                        return Number.NaN;
+                }
+                const percent = ping.loss * 100;
+                return Number.isFinite(percent) ? percent : Number.NaN;
+        }
+
+        function getPingMetric(ping, key) {
+                if (!ping || typeof ping[key] !== 'number') {
+                        return Number.NaN;
+                }
+                const value = ping[key];
+                return Number.isFinite(value) ? value : Number.NaN;
+        }
+
+        function extractMtuValue(mtu) {
+                if (!mtu || typeof mtu.path_mtu !== 'number') {
+                        return Number.NaN;
+                }
+                const value = mtu.path_mtu;
+                if (!Number.isFinite(value) || value <= 0) {
+                        return Number.NaN;
+                }
+                return value;
+        }
+
+        function formatDelta(current, reference, formatValue, formatDiff) {
+                if (!Number.isFinite(current)) {
+                        return '—';
+                }
+                const baseText = formatValue(current);
+                if (!Number.isFinite(reference)) {
+                        return `${baseText} (Δ n/a)`;
+                }
+                return `${baseText} (Δ ${formatDiff(current - reference)})`;
+        }
+
+        function formatPercentValue(value) {
+                if (!Number.isFinite(value)) {
+                        return '—';
+                }
+                const decimals = Math.abs(value) >= 10 ? 0 : 1;
+                return `${value.toFixed(decimals)}%`;
+        }
+
+        function formatPercentDelta(delta) {
+                if (!Number.isFinite(delta)) {
+                        return 'n/a';
+                }
+                if (delta === 0) {
+                        return '0%';
+                }
+                const decimals = Math.abs(delta) >= 10 ? 0 : 1;
+                const sign = delta > 0 ? '+' : MINUS;
+                return `${sign}${Math.abs(delta).toFixed(decimals)}%`;
+        }
+
+        function formatMsValue(value) {
+                if (!Number.isFinite(value)) {
+                        return '—';
+                }
+                const decimals = Math.abs(value) >= 10 ? 0 : 1;
+                return `${value.toFixed(decimals)} ms`;
+        }
+
+        function formatMsDelta(delta) {
+                if (!Number.isFinite(delta)) {
+                        return 'n/a';
+                }
+                if (delta === 0) {
+                        return '0 ms';
+                }
+                const decimals = Math.abs(delta) >= 10 ? 0 : 1;
+                const sign = delta > 0 ? '+' : MINUS;
+                return `${sign}${Math.abs(delta).toFixed(decimals)} ms`;
         }
 
         form.addEventListener('submit', async (event) => {
@@ -743,7 +1177,40 @@
                 });
         }
 
+        if (historyList) {
+                historyList.addEventListener('click', async (event) => {
+                        const element = event.target instanceof Element ? event.target : null;
+                        if (!element) {
+                                return;
+                        }
+                        const selectBtn = element.closest('[data-action="select-run"]');
+                        if (selectBtn) {
+                                event.preventDefault();
+                                const runId = selectBtn.dataset.runId;
+                                if (runId) {
+                                        await selectHistoryRun(runId);
+                                }
+                                return;
+                        }
+                        const compareBtn = element.closest('[data-action="compare-run"]');
+                        if (compareBtn) {
+                                event.preventDefault();
+                                const runId = compareBtn.dataset.runId;
+                                if (runId) {
+                                        await toggleCompare(runId);
+                                }
+                        }
+                });
+        }
+
+        if (clearCompareBtn) {
+                clearCompareBtn.addEventListener('click', () => {
+                        setCompareResults(null, null);
+                });
+        }
+
         ensureStream();
         updateStatus();
+        loadResults();
         setBundleAvailability(false);
 })();

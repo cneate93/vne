@@ -11,7 +11,7 @@ body {
 }
 
 .container {
-        max-width: 900px;
+        max-width: 1100px;
         margin: 0 auto;
         padding: 2rem 1.5rem 3rem;
 }
@@ -328,4 +328,195 @@ button:hover {
         .container {
                 padding: 1.5rem 1rem 2rem;
         }
+}
+.content-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+}
+
+.content-main {
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+}
+
+@media (min-width: 960px) {
+        .content-grid {
+                flex-direction: row;
+                align-items: flex-start;
+        }
+        .history-card {
+                flex: 0 0 260px;
+                position: sticky;
+                top: 1.5rem;
+                align-self: flex-start;
+        }
+        .content-main {
+                flex: 1;
+        }
+}
+
+.history-card h2 {
+        margin-top: 0;
+}
+
+.history-empty {
+        margin: 0.5rem 0 0;
+        font-size: 0.9rem;
+        color: #64748b;
+}
+
+.history-list {
+        list-style: none;
+        margin: 0.75rem 0 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+}
+
+.history-item {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.7rem 0.75rem;
+        border-radius: 12px;
+        background: rgba(148, 163, 184, 0.12);
+        border: 1px solid transparent;
+        transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.history-item.is-active {
+        background: rgba(37, 99, 235, 0.15);
+        border-color: rgba(37, 99, 235, 0.45);
+}
+
+.history-item.is-compare {
+        box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.45);
+}
+
+.history-select {
+        flex: 1;
+        background: none;
+        border: none;
+        color: inherit;
+        text-align: left;
+        padding: 0;
+        font: inherit;
+        cursor: pointer;
+}
+
+.history-select:focus-visible {
+        outline: 2px solid #2563eb;
+        outline-offset: 2px;
+}
+
+.history-run-time {
+        display: block;
+        font-weight: 600;
+        font-size: 0.95rem;
+}
+
+.history-run-target {
+        display: block;
+        font-size: 0.85rem;
+        color: #52606d;
+}
+
+.history-run-classification {
+        display: inline-block;
+        margin-top: 0.3rem;
+        font-size: 0.75rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #475569;
+}
+
+.history-compare-btn {
+        background: rgba(37, 99, 235, 0.12);
+        border: none;
+        color: #2563eb;
+        padding: 0.35rem 0.6rem;
+        border-radius: 8px;
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+}
+
+.history-compare-btn:hover,
+.history-compare-btn:focus-visible {
+        background: rgba(37, 99, 235, 0.2);
+        outline: none;
+}
+
+.history-item.is-compare .history-compare-btn {
+        background: rgba(220, 38, 38, 0.18);
+        color: #b91c1c;
+}
+
+.history-compare {
+        margin-top: 1.5rem;
+        padding-top: 1rem;
+        border-top: 1px solid rgba(148, 163, 184, 0.4);
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+}
+
+.history-compare-label {
+        margin: 0;
+        font-weight: 600;
+}
+
+.button-small {
+        padding: 0.45rem 0.85rem;
+        font-size: 0.85rem;
+        border-radius: 999px;
+}
+
+.compare-grid {
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.compare-group h3 {
+        margin: 0 0 0.5rem;
+        font-size: 1.05rem;
+}
+
+.compare-metrics {
+        margin: 0;
+        padding: 0;
+}
+
+.compare-metrics div {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding: 0.35rem 0;
+        border-bottom: 1px solid rgba(226, 232, 240, 0.6);
+        font-size: 0.95rem;
+}
+
+.compare-metrics div:last-child {
+        border-bottom: none;
+}
+
+.compare-metrics dt {
+        margin: 0;
+        font-weight: 500;
+}
+
+.compare-metrics dd {
+        margin: 0;
+        text-align: right;
+        font-feature-settings: "tnum";
+}
+
+.compare-group p {
+        margin: 0;
+        font-size: 0.95rem;
+        font-weight: 500;
 }
