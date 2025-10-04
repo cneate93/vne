@@ -37,6 +37,20 @@
     <p>No major issues detected by the MVP checks.</p>
   {{ end }}
 
+  <h2>Overall Classification</h2>
+  {{ if .Classification }}
+    <p>{{ .Classification }}</p>
+  {{ else }}
+    <p>(not determined)</p>
+  {{ end }}
+  {{ if .Reasons }}
+    <ul>
+      {{ range .Reasons }}
+        <li>{{ . }}</li>
+      {{ end }}
+    </ul>
+  {{ end }}
+
   <h2>Local Network Info</h2>
   <table>
     <tr><th>Hostname</th><td>{{ .NetInfo.HostName }}</td></tr>
@@ -59,9 +73,9 @@
 
   <h2>Connectivity Checks</h2>
   <table>
-    <tr><th>Check</th><th>Target</th><th>Avg (ms)</th><th>Loss</th></tr>
-    <tr><td>Gateway Ping</td><td>{{ if .HasGateway }}{{ .GatewayUsed }}{{ else }}(n/a){{ end }}</td><td>{{ printf "%.1f" .GwPing.AvgMs }}</td><td>{{ .GwLossPct }}</td></tr>
-    <tr><td>WAN Ping</td><td>{{ .TargetHost }}</td><td>{{ printf "%.1f" .WanPing.AvgMs }}</td><td>{{ .WanLossPct }}</td></tr>
+    <tr><th>Check</th><th>Target</th><th>Avg (ms)</th><th>Loss</th><th>Jitter (ms)</th></tr>
+    <tr><td>Gateway Ping</td><td>{{ if .HasGateway }}{{ .GatewayUsed }}{{ else }}(n/a){{ end }}</td><td>{{ printf "%.1f" .GwPing.AvgMs }}</td><td>{{ .GwLossPct }}</td><td>{{ printf "%.1f" .GwJitterMs }}</td></tr>
+    <tr><td>WAN Ping</td><td>{{ .TargetHost }}</td><td>{{ printf "%.1f" .WanPing.AvgMs }}</td><td>{{ .WanLossPct }}</td><td>{{ printf "%.1f" .WanJitterMs }}</td></tr>
   </table>
 
   <h2>DNS</h2>

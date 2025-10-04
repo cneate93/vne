@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cneate93/vne/internal/engine"
 	"github.com/cneate93/vne/internal/packs"
-	"github.com/cneate93/vne/internal/probes"
 	"github.com/cneate93/vne/internal/progress"
 	"github.com/cneate93/vne/internal/report"
 	"github.com/cneate93/vne/internal/snmp"
@@ -113,69 +113,24 @@ func runDiagnostics(ctx RunContext, opts RunOptions) (report.Results, error) {
 		}
 	}
 
-	phase("netinfo")
-	println("\n→ Collecting local network info…")
-	log.Println("Collecting local network info")
-	netInfo, err := probes.GetBasics()
+	params := engine.Params{
+		Count:         opts.Count,
+		Timeout:       opts.Timeout,
+		Scan:          opts.Scan,
+		ScanTimeout:   opts.ScanTimeout,
+		ScanMaxHosts:  opts.ScanMaxHosts,
+		ScanCIDRLimit: opts.ScanCIDRLimit,
+		TargetHost:    ctx.TargetHost,
+		Reporter:      reporter,
+		Printer:       printer,
+	}
+	baseRes, err := engine.Run(context.Background(), params)
 	if err != nil {
-		log.Println("netinfo error:", err)
+		return report.Results{}, err
 	}
-
-	gw := netInfo.DefaultGateway
-	if gw == "" && len(netInfo.Gateways) > 0 {
-		gw = netInfo.Gateways[0]
-	}
-
-	var l2Hosts []probes.L2Host
-	phase("l2-scan")
-	if opts.Scan {
-		println("→ Discovering local layer-2 neighbors (ping sweep)…")
-		log.Println("Running layer-2 discovery")
-		l2Hosts, err = probes.L2Scan(opts.ScanTimeout, opts.ScanMaxHosts, opts.ScanCIDRLimit)
-		if err != nil {
-			println("  Unable to complete L2 discovery:", err)
-			log.Println("L2 discovery error:", err)
-		} else if len(l2Hosts) == 0 {
-			println("  No L2 hosts discovered (ARP cache empty).")
-		}
-	} else {
-		println("→ Skipping local layer-2 discovery (enable with --scan).")
-		log.Println("Skipping layer-2 discovery (flag not set)")
-	}
-
-	var gwPing probes.PingResult
-	phase("gateway")
-	if gw != "" {
-		println("→ Pinging default gateway:", gw)
-		log.Println("Pinging default gateway", gw)
-		gwPing, _ = probes.PingHost(gw, opts.Count, opts.Timeout)
-	} else {
-		println("→ No default gateway detected; skipping gateway ping.")
-		log.Println("No default gateway detected; skipping gateway ping")
-	}
-
-	phase("dns")
-	println("→ Testing DNS lookups…")
-	log.Println("Testing DNS lookups")
-	dnsLocal, _ := probes.DNSLookupTimed("cloudflare.com", netInfo.DNSServers, opts.Timeout)
-	dnsCF, _ := probes.DNSLookupTimed("cloudflare.com", []string{"1.1.1.1"}, opts.Timeout)
-
-	phase("wan")
-	println("→ Pinging internet target:", ctx.TargetHost)
-	log.Println("Pinging internet target", ctx.TargetHost)
-	wanPing, _ := probes.PingHost(ctx.TargetHost, opts.Count, opts.Timeout)
-
-	phase("traceroute")
-	println("→ Traceroute (this may take ~10–20 seconds)…")
-	log.Println("Running traceroute")
-	traceOut, _ := probes.Trace(ctx.TargetHost, 20, opts.Timeout)
-
-	phase("mtu")
-	println("→ MTU / Path MTU probe…")
-	log.Println("Running MTU / Path MTU probe")
-	mtu, _ := probes.MTUCheck(ctx.TargetHost)
 
 	var autoPackFindings []report.Finding
+	l2Hosts := baseRes.Discovered
 	if opts.AutoPacks && !opts.SkipPython {
 		phase("python-packs")
 		selected := packs.PacksFor(l2Hosts)
@@ -286,42 +241,8 @@ func runDiagnostics(ctx RunContext, opts RunOptions) (report.Results, error) {
 	}
 
 	phase("finalizing")
-	findings := append([]report.Finding{}, autoPackFindings...)
-	if gw != "" && gwPing.Loss > 0.3 {
-		findings = append(findings, report.Finding{
-			Severity: "high",
-			Message:  fmt.Sprintf("High loss to default gateway (%.0f%%). Suspect local wiring/switch port; check cable/port; look for error counters.", gwPing.Loss*100),
-		})
-	}
-	if dnsLocal.AvgMs > 100 && dnsCF.AvgMs > 0 && dnsCF.AvgMs < 50 {
-		findings = append(findings, report.Finding{
-			Severity: "medium",
-			Message:  fmt.Sprintf("Local DNS slow (~%.0f ms). Consider using a public resolver (1.1.1.1) or fixing router DNS forwarder.", dnsLocal.AvgMs),
-		})
-	}
-	if wanPing.Loss > 0.05 {
-		findings = append(findings, report.Finding{
-			Severity: "medium",
-			Message:  fmt.Sprintf("Packet loss to internet target (~%.0f%%). Likely ISP/modem or upstream congestion.", wanPing.Loss*100),
-		})
-	}
-	if mtu.PathMTU > 0 && mtu.PathMTU < 1500 {
-		findings = append(findings, report.Finding{
-			Severity: "info",
-			Message:  fmt.Sprintf("Path MTU appears to be %d. If VPN/tunnel is in path, lower MTU or enable TCP MSS clamping.", mtu.PathMTU),
-		})
-	}
-	vpnAdapters := netInfo.VPNAdapterNames()
-	if len(vpnAdapters) > 0 && (mtu.PathMTU == 0 || mtu.PathMTU < 1500) {
-		mtuPhrase := "Path MTU probe was inconclusive"
-		if mtu.PathMTU > 0 {
-			mtuPhrase = fmt.Sprintf("Path MTU reported as %d", mtu.PathMTU)
-		}
-		findings = append(findings, report.Finding{
-			Severity: "info",
-			Message:  fmt.Sprintf("%s with active VPN/tunnel adapter (%s). Recommend setting tunnel MTU to 1420–1412 and enabling a TCP MSS clamp to avoid fragmentation.", mtuPhrase, strings.Join(vpnAdapters, ", ")),
-		})
-	}
+	findings := append([]report.Finding{}, baseRes.Findings...)
+	findings = append(findings, autoPackFindings...)
 	if ifaceHealth != nil {
 		if ifaceHealth.OperStatus != "" && strings.ToLower(ifaceHealth.OperStatus) != "up" {
 			findings = append(findings, report.Finding{
@@ -346,27 +267,14 @@ func runDiagnostics(ctx RunContext, opts RunOptions) (report.Results, error) {
 		findings = append(findings, ciscoRaw.Findings...)
 	}
 
-	res := report.Results{
-		When:        time.Now(),
-		UserNote:    ctx.UserNotes,
-		NetInfo:     netInfo,
-		Discovered:  l2Hosts,
-		GwPing:      gwPing,
-		WanPing:     wanPing,
-		DNSLocal:    dnsLocal,
-		DNSCF:       dnsCF,
-		Trace:       traceOut,
-		MTU:         mtu,
-		Findings:    findings,
-		FortiRaw:    fortiRaw,
-		CiscoIOS:    ciscoRaw,
-		IfaceHealth: ifaceHealth,
-		GwLossPct:   fmt.Sprintf("%.0f%%", gwPing.Loss*100),
-		WanLossPct:  fmt.Sprintf("%.0f%%", wanPing.Loss*100),
-		TargetHost:  ctx.TargetHost,
-		HasGateway:  gw != "",
-		GatewayUsed: gw,
-	}
+	baseRes.When = time.Now()
+	baseRes.UserNote = ctx.UserNotes
+	baseRes.Findings = findings
+	baseRes.FortiRaw = fortiRaw
+	baseRes.CiscoIOS = ciscoRaw
+	baseRes.IfaceHealth = ifaceHealth
+	baseRes.GwLossPct = fmt.Sprintf("%.0f%%", baseRes.GwPing.Loss*100)
+	baseRes.WanLossPct = fmt.Sprintf("%.0f%%", baseRes.WanPing.Loss*100)
 
-	return res, nil
+	return baseRes, nil
 }

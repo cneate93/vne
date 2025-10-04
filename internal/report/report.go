@@ -36,25 +36,29 @@ type CiscoPackResults struct {
 }
 
 type Results struct {
-	When        time.Time             `json:"when"`
-	UserNote    string                `json:"user_note"`
-	NetInfo     probes.NetInfo        `json:"net_info"`
-	Discovered  []probes.L2Host       `json:"discovered,omitempty"`
-	GwPing      probes.PingResult     `json:"gw_ping"`
-	WanPing     probes.PingResult     `json:"wan_ping"`
-	DNSLocal    probes.DNSResult      `json:"dns_local"`
-	DNSCF       probes.DNSResult      `json:"dns_cf"`
-	Trace       probes.TraceResult    `json:"trace"`
-	MTU         probes.MTUResult      `json:"mtu"`
-	Findings    []Finding             `json:"findings"`
-	FortiRaw    any                   `json:"forti_raw,omitempty"`
-	CiscoIOS    *CiscoPackResults     `json:"cisco_ios,omitempty"`
-	IfaceHealth *snmp.InterfaceHealth `json:"iface_health,omitempty"`
-	GwLossPct   string                `json:"gw_loss_pct"`
-	WanLossPct  string                `json:"wan_loss_pct"`
-	TargetHost  string                `json:"target_host"`
-	HasGateway  bool                  `json:"has_gateway"`
-	GatewayUsed string                `json:"gateway_used"`
+	When           time.Time             `json:"when"`
+	UserNote       string                `json:"user_note"`
+	NetInfo        probes.NetInfo        `json:"net_info"`
+	Discovered     []probes.L2Host       `json:"discovered,omitempty"`
+	GwPing         probes.PingResult     `json:"gw_ping"`
+	WanPing        probes.PingResult     `json:"wan_ping"`
+	DNSLocal       probes.DNSResult      `json:"dns_local"`
+	DNSCF          probes.DNSResult      `json:"dns_cf"`
+	Trace          probes.TraceResult    `json:"trace"`
+	MTU            probes.MTUResult      `json:"mtu"`
+	Findings       []Finding             `json:"findings"`
+	FortiRaw       any                   `json:"forti_raw,omitempty"`
+	CiscoIOS       *CiscoPackResults     `json:"cisco_ios,omitempty"`
+	IfaceHealth    *snmp.InterfaceHealth `json:"iface_health,omitempty"`
+	GwLossPct      string                `json:"gw_loss_pct"`
+	WanLossPct     string                `json:"wan_loss_pct"`
+	TargetHost     string                `json:"target_host"`
+	HasGateway     bool                  `json:"has_gateway"`
+	GatewayUsed    string                `json:"gateway_used"`
+	GwJitterMs     float64               `json:"gw_jitter_ms"`
+	WanJitterMs    float64               `json:"wan_jitter_ms"`
+	Classification string                `json:"classification"`
+	Reasons        []string              `json:"reasons"`
 }
 
 func RenderHTML(r Results, tmplPath, outPath string) error {

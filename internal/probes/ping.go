@@ -68,19 +68,22 @@ var percentRe = regexp.MustCompile(`(\d+(?:\.\d+)?)%`)
 func parsePing(out string) PingResult {
 	result := PingResult{Raw: out}
 	lines := strings.Split(out, "\n")
+	parsedLoss := false
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		lower := strings.ToLower(trimmed)
 
-		if result.Loss == 0 {
+		if !parsedLoss {
 			if m := lossRe.FindStringSubmatch(lower); len(m) == 2 {
 				if v, err := strconv.ParseFloat(m[1], 64); err == nil {
-					result.Loss = v
+					result.Loss = v / 100
+					parsedLoss = true
 				}
 			} else if m := percentRe.FindStringSubmatch(lower); len(m) == 2 && strings.Contains(lower, "loss") {
 				if v, err := strconv.ParseFloat(m[1], 64); err == nil {
-					result.Loss = v
+					result.Loss = v / 100
+					parsedLoss = true
 				}
 			}
 		}
