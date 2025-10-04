@@ -235,7 +235,7 @@ func main() {
 		}
 		findings = append(findings, report.Finding{
 			Severity: "info",
-			Message:  fmt.Sprintf("%s with active VPN/tunnel adapter (%s). Set tunnel MTU to 1420–1412 and enable TCP MSS clamping to avoid fragmentation.", mtuPhrase, strings.Join(vpnAdapters, ", ")),
+			Message:  fmt.Sprintf("%s with active VPN/tunnel adapter (%s). Recommend setting tunnel MTU to 1420–1412 and enabling a TCP MSS clamp to avoid fragmentation.", mtuPhrase, strings.Join(vpnAdapters, ", ")),
 		})
 	}
 
