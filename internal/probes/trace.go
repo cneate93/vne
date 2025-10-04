@@ -30,6 +30,7 @@ func Trace(target string, maxHops int, timeout time.Duration) (TraceResult, erro
 		cmd         *exec.Cmd
 		commandName string
 	)
+
 	switch runtime.GOOS {
 	case "windows":
 		if _, err := exec.LookPath("tracert"); err != nil {
@@ -39,17 +40,18 @@ func Trace(target string, maxHops int, timeout time.Duration) (TraceResult, erro
 		commandName = "tracert"
 		cmd = exec.CommandContext(ctx, commandName, "-d", "-h", strconv.Itoa(maxHops), target)
 	case "linux":
-		if _, err := exec.LookPath("traceroute"); err == nil {
+		traceroutePath, tracerouteErr := exec.LookPath("traceroute")
+		if tracerouteErr == nil {
 			commandName = "traceroute"
-			cmd = exec.CommandContext(ctx, commandName, "-n", "-m", strconv.Itoa(maxHops), target)
+			cmd = exec.CommandContext(ctx, traceroutePath, "-n", "-m", strconv.Itoa(maxHops), target)
 		} else {
-			tracerouteErr := err
-			if _, err := exec.LookPath("tracepath"); err == nil {
+			tracepathPath, tracepathErr := exec.LookPath("tracepath")
+			if tracepathErr == nil {
 				commandName = "tracepath"
-				cmd = exec.CommandContext(ctx, commandName, "-n", target)
+				cmd = exec.CommandContext(ctx, tracepathPath, "-n", target)
 			} else {
-				msg := "Neither traceroute nor tracepath commands were found on this Linux system. Install traceroute to enable network path tracing."
-				return TraceResult{Raw: msg}, fmt.Errorf("no traceroute utility found: traceroute: %w, tracepath: %v", tracerouteErr, err)
+				msg := "Neither traceroute nor tracepath commands were found on this Linux system. Install traceroute (or tracepath) to enable network path tracing."
+				return TraceResult{Raw: msg}, fmt.Errorf("no traceroute utility found: traceroute: %w, tracepath: %w", tracerouteErr, tracepathErr)
 			}
 		}
 	default:
