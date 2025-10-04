@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,6 +51,7 @@ func main() {
 	targetFlag := flag.String("target", "", "Target for WAN checks (default 1.1.1.1)")
 	outFlag := flag.String("out", "", "Output HTML report path (default vne-report.html)")
 	skipPythonFlag := flag.Bool("skip-python", false, "Skip the optional FortiGate Python pack")
+	serveFlag := flag.Bool("serve", false, "Serve the generated report over HTTP on :8080")
 	pythonFlag := flag.String("python", "", "Path to python executable for the FortiGate pack")
 	flag.Parse()
 
@@ -224,6 +227,23 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Println("\n✅ Done. Report written to:", outPath)
+
+	if *serveFlag {
+		relPath := outPath
+		if filepath.IsAbs(relPath) {
+			if p, err := filepath.Rel(".", relPath); err == nil {
+				relPath = p
+			}
+		}
+		relPath = filepath.ToSlash(relPath)
+		parts := strings.Split(relPath, "/")
+		for i, part := range parts {
+			parts[i] = url.PathEscape(part)
+		}
+		servedPath := strings.Join(parts, "/")
+		fmt.Printf("Serving report at http://localhost:8080/%s\n", servedPath)
+		log.Fatal(http.ListenAndServe(":8080", http.FileServer(http.Dir("."))))
+	}
 }
 
 func isWindows() bool {
