@@ -248,6 +248,17 @@ func main() {
 		gw = netInfo.Gateways[0]
 	}
 
+	// 1.5) Layer-2 discovery (ARP scan)
+	fmt.Println("→ Discovering local layer-2 neighbors (ping sweep)…")
+	log.Println("Running layer-2 discovery")
+	l2Hosts, l2Err := probes.L2Scan(3*time.Second, 256)
+	if l2Err != nil {
+		fmt.Println("  Unable to complete L2 discovery:", l2Err)
+		log.Println("L2 discovery error:", l2Err)
+	} else if len(l2Hosts) == 0 {
+		fmt.Println("  No L2 hosts discovered (ARP cache empty).")
+	}
+
 	// 2) Gateway ping
 	var gwPing probes.PingResult
 	if gw != "" {
@@ -417,6 +428,7 @@ func main() {
 		When:        time.Now(),
 		UserNote:    ctx.UserNotes,
 		NetInfo:     netInfo,
+		Discovered:  l2Hosts,
 		GwPing:      gwPing,
 		WanPing:     wanPing,
 		DNSLocal:    dnsLocal,

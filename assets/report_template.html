@@ -57,6 +57,20 @@
     {{ end }}
   </table>
 
+  {{ if .Discovered }}
+  <h3>Discovered Devices (L2)</h3>
+  <table>
+    <tr><th>Interface</th><th>IP</th><th>MAC</th></tr>
+    {{ range .Discovered }}
+      <tr>
+        <td>{{ .IfName }}</td>
+        <td>{{ .IP }}</td>
+        <td>{{ .MAC }}</td>
+      </tr>
+    {{ end }}
+  </table>
+  {{ end }}
+
   {{ if .IfaceHealth }}
   <h2>SNMP Interface Health</h2>
   <table>

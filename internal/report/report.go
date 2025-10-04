@@ -39,6 +39,7 @@ type Results struct {
 	When        time.Time             `json:"when"`
 	UserNote    string                `json:"user_note"`
 	NetInfo     probes.NetInfo        `json:"net_info"`
+	Discovered  []probes.L2Host       `json:"discovered,omitempty"`
 	GwPing      probes.PingResult     `json:"gw_ping"`
 	WanPing     probes.PingResult     `json:"wan_ping"`
 	DNSLocal    probes.DNSResult      `json:"dns_local"`
