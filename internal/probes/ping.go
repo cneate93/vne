@@ -1,46 +1,129 @@
 package probes
 
 import (
-	"context"
-	"net"
-	"time"
+	"bytes"
+	"errors"
+	"os/exec"
+	"regexp"
+	"runtime"
+	"strconv"
+	"strings"
 )
 
-type DNSResult struct {
-	AvgMs   float64  `json:"avg_ms"`
-	Answers []string `json:"answers"`
+type PingResult struct {
+	AvgMs float64 `json:"avg_ms"`
+	Loss  float64 `json:"loss"`
+	Raw   string  `json:"raw"`
 }
 
-func DNSLookupTimed(host string, resolvers []string) (DNSResult, error) {
-	if len(resolvers) == 0 {
-		resolvers = []string{""}
+func PingHost(target string, count int) (PingResult, error) {
+	if count <= 0 {
+		count = 4
 	}
-	var total float64
-	var answers []string
-	var n int
-	for _, r := range resolvers {
-		res := net.Resolver{}
-		if r != "" {
-			dialer := func(ctx context.Context, network, address string) (net.Conn, error) {
-				d := net.Dialer{Timeout: 2 * time.Second}
-				return d.DialContext(ctx, network, net.JoinHostPort(r, "53"))
+
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("ping", "-n", strconv.Itoa(count), target)
+	default:
+		cmd = exec.Command("ping", "-c", strconv.Itoa(count), "-n", target)
+	}
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
+	if err != nil {
+		// When ping exits with a non-zero status we still want to surface the raw output.
+		// If no output was produced, fall back to stderr for context.
+		if len(output) == 0 {
+			output = stderr.Bytes()
+		}
+		if output == nil {
+			output = []byte{}
+		}
+	}
+
+	res := parsePing(string(output))
+	if err != nil {
+		return res, errors.New(strings.TrimSpace(err.Error() + " " + stderr.String()))
+	}
+	return res, nil
+}
+
+var lossRe = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)%\s*loss`)
+var percentRe = regexp.MustCompile(`(\d+(?:\.\d+)?)%`)
+
+func parsePing(out string) PingResult {
+	result := PingResult{Raw: out}
+	lines := strings.Split(out, "\n")
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+
+		if result.Loss == 0 {
+			if m := lossRe.FindStringSubmatch(lower); len(m) == 2 {
+				if v, err := strconv.ParseFloat(m[1], 64); err == nil {
+					result.Loss = v
+				}
+			} else if m := percentRe.FindStringSubmatch(lower); len(m) == 2 && strings.Contains(lower, "loss") {
+				if v, err := strconv.ParseFloat(m[1], 64); err == nil {
+					result.Loss = v
+				}
 			}
-			res = net.Resolver{PreferGo: true, Dial: dialer}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		t0 := time.Now()
-		ips, err := res.LookupHost(ctx, host)
-		el := time.Since(t0).Seconds() * 1000.0
-		cancel()
-		if err == nil {
-			total += el
-			n++
-			answers = append(answers, ips...)
+
+		switch {
+		case strings.Contains(lower, "min/avg"), strings.Contains(lower, "min ="):
+			result.AvgMs = extractAvg(trimmed)
+		case strings.HasPrefix(lower, "average ="):
+			if avg, err := parseNumberBetween(trimmed, "=", "ms"); err == nil {
+				result.AvgMs = avg
+			}
+		case strings.Contains(lower, "round-trip"):
+			result.AvgMs = extractAvg(trimmed)
 		}
 	}
-	var avg float64
-	if n > 0 {
-		avg = total / float64(n)
+
+	return result
+}
+
+func extractAvg(line string) float64 {
+	parts := strings.Split(line, "=")
+	if len(parts) < 2 {
+		return 0
 	}
-	return DNSResult{AvgMs: avg, Answers: answers}, nil
+	stats := strings.TrimSpace(parts[len(parts)-1])
+	stats = strings.TrimSuffix(stats, " ms")
+	stats = strings.TrimSuffix(stats, " milliseconds")
+	pieces := strings.Split(stats, "/")
+	if len(pieces) >= 2 {
+		if avg, err := strconv.ParseFloat(strings.TrimSpace(pieces[1]), 64); err == nil {
+			return avg
+		}
+	}
+	return 0
+}
+
+func parseNumberBetween(line, left, right string) (float64, error) {
+	start := strings.Index(line, left)
+	if start == -1 {
+		return 0, errors.New("left marker not found")
+	}
+	start += len(left)
+	end := len(line)
+	if right != "" {
+		if idx := strings.Index(line[start:], right); idx != -1 {
+			end = start + idx
+		}
+	}
+	segment := strings.TrimSpace(line[start:end])
+	segment = strings.TrimSuffix(segment, "ms")
+	segment = strings.TrimSpace(segment)
+	segment = strings.TrimSuffix(segment, "ms")
+	segment = strings.TrimSpace(segment)
+	if strings.HasSuffix(segment, "ms") {
+		segment = strings.TrimSpace(segment[:len(segment)-2])
+	}
+	return strconv.ParseFloat(segment, 64)
 }
