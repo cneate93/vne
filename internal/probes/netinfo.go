@@ -3,6 +3,7 @@ package probes
 import (
 	"net"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 )
@@ -25,20 +26,15 @@ type IF struct {
 // VPNAdapterNames returns the set of active interfaces that appear to be
 // VPN/tunnel adapters. This is based on common interface name patterns for
 // popular VPN clients and tunnelling drivers (WireGuard, OpenVPN, etc.).
+var vpnAdapterRegex = regexp.MustCompile(`(?i)(nord|openvpn|wireguard|^tun|^tap|^wg)`)
+
 func (ni NetInfo) VPNAdapterNames() []string {
 	var matches []string
 	for _, iface := range ni.Interfaces {
 		if !iface.Up {
 			continue
 		}
-		nameLower := strings.ToLower(iface.Name)
-		switch {
-		case strings.Contains(nameLower, "nord"),
-			strings.Contains(nameLower, "openvpn"),
-			strings.Contains(nameLower, "wireguard"),
-			strings.HasPrefix(nameLower, "tun"),
-			strings.HasPrefix(nameLower, "tap"),
-			strings.HasPrefix(nameLower, "wg"):
+		if vpnAdapterRegex.MatchString(strings.TrimSpace(iface.Name)) {
 			matches = append(matches, iface.Name)
 		}
 	}
