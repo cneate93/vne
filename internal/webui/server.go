@@ -4,15 +4,19 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/cneate93/vne/internal/history"
 	"github.com/cneate93/vne/internal/progress"
 	"github.com/cneate93/vne/internal/report"
 	"github.com/cneate93/vne/internal/sshx"
@@ -35,6 +39,7 @@ type Server struct {
 	mu    sync.Mutex
 	state runState
 	files http.Handler
+	hist  *history.Store
 
 	subsMu sync.Mutex
 	subs   map[chan streamEvent]struct{}
@@ -48,6 +53,7 @@ type runState struct {
 	results      *report.Results
 	log          []streamEvent
 	baseFindings []report.Finding
+	historyID    string
 }
 
 type streamEvent struct {
@@ -120,6 +126,7 @@ func NewServer(runner RunFunc) (*Server, error) {
 			message: "Ready",
 		},
 		subs: make(map[chan streamEvent]struct{}),
+		hist: history.NewStore("runs", 20),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", srv.handleIndex)
@@ -130,6 +137,8 @@ func NewServer(runner RunFunc) (*Server, error) {
 	mux.HandleFunc("/api/bundle", srv.handleBundle)
 	mux.HandleFunc("/api/vendor", srv.handleVendor)
 	mux.HandleFunc("/api/stream", srv.handleStream)
+	mux.HandleFunc("/api/history", srv.handleHistory)
+	mux.HandleFunc("/api/run/", srv.handleRun)
 	srv.mux = mux
 	srv.recordPhase("idle", "Ready", false)
 	return srv, nil
@@ -180,6 +189,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 	s.state.message = "Starting diagnostics…"
 	s.state.results = nil
 	s.state.log = nil
+	s.state.historyID = ""
 	s.mu.Unlock()
 
 	s.recordPhase("starting", "Starting diagnostics…", true)
@@ -216,9 +226,78 @@ func (s *Server) handleResults(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	res := s.state.results
 	phase := s.state.phase
+	historyID := s.state.historyID
 	s.mu.Unlock()
 	if res == nil || phase != "finished" {
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	response := struct {
+		*report.Results
+		HistoryID string `json:"history_id,omitempty"`
+	}{
+		Results:   res,
+		HistoryID: historyID,
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.hist == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("[]"))
+		return
+	}
+	entries, err := s.hist.List()
+	if err != nil {
+		http.Error(w, "unable to load run history", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(entries)
+}
+
+func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.hist == nil {
+		http.NotFound(w, r)
+		return
+	}
+	const prefix = "/api/run/"
+	if !strings.HasPrefix(r.URL.Path, prefix) {
+		http.NotFound(w, r)
+		return
+	}
+	encodedID := strings.TrimPrefix(r.URL.Path, prefix)
+	if encodedID == "" {
+		http.Error(w, "run id required", http.StatusBadRequest)
+		return
+	}
+	if strings.Contains(encodedID, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	runID, err := url.PathUnescape(encodedID)
+	if err != nil {
+		http.Error(w, "invalid run id", http.StatusBadRequest)
+		return
+	}
+	res, err := s.hist.Load(runID)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "unable to load run", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -315,13 +394,14 @@ func (s *Server) execute(req RunRequest) {
 	progress := &progressEmitter{server: s}
 	res, err := s.runner(ctx, req, progress)
 
-	s.mu.Lock()
 	if err != nil {
+		s.mu.Lock()
 		s.state.phase = "error"
 		s.state.percent = 100
 		s.state.message = err.Error()
 		s.state.running = false
 		s.state.results = nil
+		s.state.historyID = ""
 		s.mu.Unlock()
 		s.recordPhase("error", err.Error(), false)
 		s.recordStep(fmt.Sprintf("Run failed: %s", err.Error()))
@@ -329,12 +409,22 @@ func (s *Server) execute(req RunRequest) {
 		return
 	}
 	resCopy := res
+	historyID := ""
+	if s.hist != nil {
+		if id, saveErr := s.hist.Save(resCopy); saveErr != nil {
+			s.recordStep(fmt.Sprintf("⚠️ Unable to store run history: %v", saveErr))
+		} else {
+			historyID = id
+		}
+	}
+	s.mu.Lock()
 	s.state.phase = "finished"
 	s.state.percent = 100
 	s.state.message = "Diagnostics complete"
 	s.state.running = false
 	s.state.results = &resCopy
 	s.state.baseFindings = append([]report.Finding(nil), resCopy.Findings...)
+	s.state.historyID = historyID
 	s.mu.Unlock()
 	s.recordPhase("finished", "Diagnostics complete", false)
 	s.recordStep("Diagnostics complete.")
@@ -350,6 +440,9 @@ func (s *Server) executeVendor(creds vendorCreds, suggestions []string) {
 	var ciscoRaw *report.CiscoPackResults
 	var vendorSummaries []report.Finding
 	var vendorFindings []report.Finding
+	var updatedCopy report.Results
+	var haveUpdated bool
+	var historyID string
 
 	if shouldRunForti {
 		s.recordStep("→ Running FortiGate vendor pack…")
@@ -451,12 +544,21 @@ func (s *Server) executeVendor(creds vendorCreds, suggestions []string) {
 			resCopy.Findings = nil
 		}
 		s.state.results = &resCopy
+		updatedCopy = resCopy
+		haveUpdated = true
 	}
 	s.state.running = false
 	s.state.phase = "finished"
 	s.state.percent = 100
 	s.state.message = "Vendor checks complete"
+	historyID = s.state.historyID
 	s.mu.Unlock()
+
+	if haveUpdated && historyID != "" && s.hist != nil {
+		if err := s.hist.Update(historyID, updatedCopy); err != nil {
+			s.recordStep(fmt.Sprintf("⚠️ Unable to update run history: %v", err))
+		}
+	}
 
 	s.recordPhase("finished", "Vendor checks complete", false)
 	s.recordStep("Vendor checks complete.")

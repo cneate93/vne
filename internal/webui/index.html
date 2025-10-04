@@ -12,118 +12,178 @@
                         <p class="tagline">Run diagnostics from your browser.</p>
                 </header>
 
-                <section class="card">
-                        <h2>Start a run</h2>
-                        <form id="start-form">
-                                <label class="field">
-                                        <span>Internet target</span>
-                                        <input type="text" name="target" id="target" value="1.1.1.1" autocomplete="off">
-                                </label>
-                                <label class="checkbox">
-                                        <input type="checkbox" name="scan" id="scan">
-                                        <span>Include local layer-2 discovery (experimental)</span>
-                                </label>
-                                <button type="submit">Start diagnostics</button>
-                        </form>
-                        <p id="start-error" class="error" role="alert" hidden></p>
-                </section>
+                <div class="content-grid">
+                        <aside class="card history-card" id="history-card">
+                                <h2>Recent runs</h2>
+                                <p id="history-empty" class="history-empty">(No saved runs yet.)</p>
+                                <ul id="history-list" class="history-list" aria-label="Recent runs"></ul>
+                                <div class="history-compare" id="history-compare" hidden>
+                                        <span class="label">Comparing with</span>
+                                        <p id="compare-label" class="history-compare-label">—</p>
+                                        <button type="button" id="clear-compare" class="button-secondary button-small">Clear</button>
+                                </div>
+                        </aside>
 
-                <section class="card">
-                        <h2>Status</h2>
-                        <div class="status-grid">
-                                <div>
-                                        <span class="label">Phase</span>
-                                        <span id="status-phase">Idle</span>
-                                </div>
-                                <div>
-                                        <span class="label">Progress</span>
-                                        <span id="status-percent">0%</span>
-                                </div>
-                        </div>
-                        <div class="progress" aria-hidden="true">
-                                <div class="progress-bar" id="progress-bar"></div>
-                        </div>
-                        <p id="status-message" class="status-message">Ready</p>
-                </section>
+                        <div class="content-main">
+                                <section class="card">
+                                        <h2>Start a run</h2>
+                                        <form id="start-form">
+                                                <label class="field">
+                                                        <span>Internet target</span>
+                                                        <input type="text" name="target" id="target" value="1.1.1.1" autocomplete="off">
+                                                </label>
+                                                <label class="checkbox">
+                                                        <input type="checkbox" name="scan" id="scan">
+                                                        <span>Include local layer-2 discovery (experimental)</span>
+                                                </label>
+                                                <button type="submit">Start diagnostics</button>
+                                        </form>
+                                        <p id="start-error" class="error" role="alert" hidden></p>
+                                </section>
 
-                <section class="card" id="lan-card" hidden>
-                        <h2>LAN Performance</h2>
-                        <p class="card-subtitle">Default gateway: <span id="lan-dest">(detecting…)</span></p>
-                        <div class="metric-grid">
-                                <div class="metric">
-                                        <span class="label">Avg RTT</span>
-                                        <span id="lan-avg" class="metric-value">—</span>
-                                </div>
-                                <div class="metric">
-                                        <span class="label">95th Percentile</span>
-                                        <span id="lan-p95" class="metric-value">—</span>
-                                </div>
-                                <div class="metric">
-                                        <span class="label">Jitter</span>
-                                        <span id="lan-jitter" class="metric-value">—</span>
-                                </div>
-                        </div>
-                </section>
+                                <section class="card">
+                                        <h2>Status</h2>
+                                        <div class="status-grid">
+                                                <div>
+                                                        <span class="label">Phase</span>
+                                                        <span id="status-phase">Idle</span>
+                                                </div>
+                                                <div>
+                                                        <span class="label">Progress</span>
+                                                        <span id="status-percent">0%</span>
+                                                </div>
+                                        </div>
+                                        <div class="progress" aria-hidden="true">
+                                                <div class="progress-bar" id="progress-bar"></div>
+                                        </div>
+                                        <p id="status-message" class="status-message">Ready</p>
+                                </section>
 
-                <section class="card" id="wan-card" hidden>
-                        <h2>WAN Performance</h2>
-                        <p class="card-subtitle">Target host: <span id="wan-dest">(detecting…)</span></p>
-                        <div class="metric-grid">
-                                <div class="metric">
-                                        <span class="label">Avg RTT</span>
-                                        <span id="wan-avg" class="metric-value">—</span>
-                                </div>
-                                <div class="metric">
-                                        <span class="label">95th Percentile</span>
-                                        <span id="wan-p95" class="metric-value">—</span>
-                                </div>
-                                <div class="metric">
-                                        <span class="label">Jitter</span>
-                                        <span id="wan-jitter" class="metric-value">—</span>
-                                </div>
-                        </div>
-                </section>
+                                <section class="card" id="lan-card" hidden>
+                                        <h2>LAN Performance</h2>
+                                        <p class="card-subtitle">Default gateway: <span id="lan-dest">(detecting…)</span></p>
+                                        <div class="metric-grid">
+                                                <div class="metric">
+                                                        <span class="label">Avg RTT</span>
+                                                        <span id="lan-avg" class="metric-value">—</span>
+                                                </div>
+                                                <div class="metric">
+                                                        <span class="label">95th Percentile</span>
+                                                        <span id="lan-p95" class="metric-value">—</span>
+                                                </div>
+                                                <div class="metric">
+                                                        <span class="label">Jitter</span>
+                                                        <span id="lan-jitter" class="metric-value">—</span>
+                                                </div>
+                                        </div>
+                                </section>
 
-                <section class="card" id="devices-card" hidden>
-                        <h2>Discovered Devices (L2)</h2>
-                        <div class="table-responsive">
-                                <table class="data-table" aria-describedby="devices-caption">
-                                        <caption id="devices-caption" class="sr-only">Layer-2 devices found during the scan</caption>
-                                        <thead>
-                                                <tr>
-                                                        <th scope="col">Interface</th>
-                                                        <th scope="col">IP</th>
-                                                        <th scope="col">MAC</th>
-                                                        <th scope="col">Vendor</th>
-                                                </tr>
-                                        </thead>
-                                        <tbody id="devices-body"></tbody>
-                                </table>
-                        </div>
-                </section>
+                                <section class="card" id="wan-card" hidden>
+                                        <h2>WAN Performance</h2>
+                                        <p class="card-subtitle">Target host: <span id="wan-dest">(detecting…)</span></p>
+                                        <div class="metric-grid">
+                                                <div class="metric">
+                                                        <span class="label">Avg RTT</span>
+                                                        <span id="wan-avg" class="metric-value">—</span>
+                                                </div>
+                                                <div class="metric">
+                                                        <span class="label">95th Percentile</span>
+                                                        <span id="wan-p95" class="metric-value">—</span>
+                                                </div>
+                                                <div class="metric">
+                                                        <span class="label">Jitter</span>
+                                                        <span id="wan-jitter" class="metric-value">—</span>
+                                                </div>
+                                        </div>
+                                </section>
 
-                <section class="card" id="vendor-card" hidden>
-                        <div class="card-header">
-                                <h2>Vendor Checks</h2>
-                                <button type="button" id="vendor-open" class="button-secondary" hidden>Provide credentials</button>
-                        </div>
-                        <p id="vendor-message" class="card-subtitle"></p>
-                        <ul id="vendor-summary" class="list" hidden></ul>
-                        <ul id="vendor-findings" class="list" hidden></ul>
-                </section>
+                                <section class="card" id="compare-card" hidden>
+                                        <h2>Comparison</h2>
+                                        <p id="compare-summary" class="card-subtitle"></p>
+                                        <div class="compare-grid">
+                                                <div class="compare-group">
+                                                        <h3>Gateway</h3>
+                                                        <dl class="compare-metrics">
+                                                                <div>
+                                                                        <dt>Loss</dt>
+                                                                        <dd id="compare-gw-loss">—</dd>
+                                                                </div>
+                                                                <div>
+                                                                        <dt>Avg RTT</dt>
+                                                                        <dd id="compare-gw-rtt">—</dd>
+                                                                </div>
+                                                                <div>
+                                                                        <dt>Jitter</dt>
+                                                                        <dd id="compare-gw-jitter">—</dd>
+                                                                </div>
+                                                        </dl>
+                                                </div>
+                                                <div class="compare-group">
+                                                        <h3>WAN</h3>
+                                                        <dl class="compare-metrics">
+                                                                <div>
+                                                                        <dt>Loss</dt>
+                                                                        <dd id="compare-wan-loss">—</dd>
+                                                                </div>
+                                                                <div>
+                                                                        <dt>Avg RTT</dt>
+                                                                        <dd id="compare-wan-rtt">—</dd>
+                                                                </div>
+                                                                <div>
+                                                                        <dt>Jitter</dt>
+                                                                        <dd id="compare-wan-jitter">—</dd>
+                                                                </div>
+                                                        </dl>
+                                                </div>
+                                                <div class="compare-group">
+                                                        <h3>MTU</h3>
+                                                        <p id="compare-mtu">—</p>
+                                                </div>
+                                        </div>
+                                </section>
 
-                <section class="card">
-                        <h2>Console</h2>
-                        <div id="console" class="console" aria-live="polite" aria-atomic="false">
-                                <div class="console-empty">No activity yet.</div>
-                        </div>
-                </section>
+                                <section class="card" id="devices-card" hidden>
+                                        <h2>Discovered Devices (L2)</h2>
+                                        <div class="table-responsive">
+                                                <table class="data-table" aria-describedby="devices-caption">
+                                                        <caption id="devices-caption" class="sr-only">Layer-2 devices found during the scan</caption>
+                                                        <thead>
+                                                                <tr>
+                                                                        <th scope="col">Interface</th>
+                                                                        <th scope="col">IP</th>
+                                                                        <th scope="col">MAC</th>
+                                                                        <th scope="col">Vendor</th>
+                                                                </tr>
+                                                        </thead>
+                                                        <tbody id="devices-body"></tbody>
+                                                </table>
+                                        </div>
+                                </section>
 
-                <section class="card">
-                        <h2>Results</h2>
-                        <button type="button" id="download-bundle" class="button-secondary" hidden>Download bundle</button>
-                        <pre id="results" class="results">(No results yet)</pre>
-                </section>
+                                <section class="card" id="vendor-card" hidden>
+                                        <div class="card-header">
+                                                <h2>Vendor Checks</h2>
+                                                <button type="button" id="vendor-open" class="button-secondary" hidden>Provide credentials</button>
+                                        </div>
+                                        <p id="vendor-message" class="card-subtitle"></p>
+                                        <ul id="vendor-summary" class="list" hidden></ul>
+                                        <ul id="vendor-findings" class="list" hidden></ul>
+                                </section>
+
+                                <section class="card">
+                                        <h2>Console</h2>
+                                        <div id="console" class="console" aria-live="polite" aria-atomic="false">
+                                                <div class="console-empty">No activity yet.</div>
+                                        </div>
+                                </section>
+
+                                <section class="card">
+                                        <h2>Results</h2>
+                                        <button type="button" id="download-bundle" class="button-secondary" hidden>Download bundle</button>
+                                        <pre id="results" class="results">(No results yet)</pre>
+                                </section>
+                        </div>
+                </div>
         </main>
         <div id="vendor-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="vendor-modal-title" hidden>
                 <div class="modal-backdrop" data-action="close"></div>
