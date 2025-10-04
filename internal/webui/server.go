@@ -127,6 +127,7 @@ func NewServer(runner RunFunc) (*Server, error) {
 	mux.HandleFunc("/api/start", srv.handleStart)
 	mux.HandleFunc("/api/status", srv.handleStatus)
 	mux.HandleFunc("/api/results", srv.handleResults)
+	mux.HandleFunc("/api/bundle", srv.handleBundle)
 	mux.HandleFunc("/api/vendor", srv.handleVendor)
 	mux.HandleFunc("/api/stream", srv.handleStream)
 	srv.mux = mux
@@ -222,6 +223,36 @@ func (s *Server) handleResults(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(res)
+}
+
+func (s *Server) handleBundle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	s.mu.Lock()
+	res := s.state.results
+	phase := s.state.phase
+	s.mu.Unlock()
+	if res == nil || phase != "finished" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	resultsCopy := *res
+	raws := map[string][]byte{
+		"gateway-ping.txt": []byte(resultsCopy.GwPing.Raw),
+		"wan-ping.txt":     []byte(resultsCopy.WanPing.Raw),
+		"traceroute.txt":   []byte(resultsCopy.Trace.Raw),
+	}
+	bundle, err := report.BundleBytes(resultsCopy, raws)
+	if err != nil {
+		http.Error(w, "unable to build bundle", http.StatusInternalServerError)
+		return
+	}
+	filename := fmt.Sprintf("vne-evidence-%s.zip", resultsCopy.When.Format("20060102-1504"))
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	w.Write(bundle)
 }
 
 func (s *Server) handleVendor(w http.ResponseWriter, r *http.Request) {

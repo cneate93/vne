@@ -12,46 +12,43 @@ import (
 
 // WriteBundle creates a zip archive containing the rendered HTML report, a pretty
 // printed JSON representation of the results, and any additional raw artifacts.
-func WriteBundle(outZip string, results Results, raws map[string][]byte) (err error) {
+func WriteBundle(outZip string, results Results, raws map[string][]byte) error {
 	if outZip == "" {
 		return fmt.Errorf("outZip cannot be empty")
 	}
 
+	data, err := BundleBytes(results, raws)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(outZip, data, 0644)
+}
+
+// BundleBytes returns a zip archive containing the rendered HTML report, a
+// pretty-printed JSON representation of the results, and any additional raw
+// artifacts.
+func BundleBytes(results Results, raws map[string][]byte) ([]byte, error) {
 	htmlBytes, err := renderBundleHTML(results)
 	if err != nil {
-		return fmt.Errorf("render html: %w", err)
+		return nil, fmt.Errorf("render html: %w", err)
 	}
 
 	jsonBytes, err := json.MarshalIndent(results, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal results: %w", err)
+		return nil, fmt.Errorf("marshal results: %w", err)
 	}
 	jsonBytes = append(jsonBytes, '\n')
 
-	file, err := os.Create(outZip)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		closeErr := file.Close()
-		if err == nil {
-			err = closeErr
-		}
-	}()
-
-	zw := zip.NewWriter(file)
-	defer func() {
-		closeErr := zw.Close()
-		if err == nil {
-			err = closeErr
-		}
-	}()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
 
 	if err := addZipFile(zw, "report.html", htmlBytes); err != nil {
-		return err
+		zw.Close()
+		return nil, err
 	}
 	if err := addZipFile(zw, "summary.json", jsonBytes); err != nil {
-		return err
+		zw.Close()
+		return nil, err
 	}
 
 	if len(raws) > 0 {
@@ -67,12 +64,17 @@ func WriteBundle(outZip string, results Results, raws map[string][]byte) (err er
 				data = []byte{}
 			}
 			if err := addZipFile(zw, name, data); err != nil {
-				return err
+				zw.Close()
+				return nil, err
 			}
 		}
 	}
 
-	return nil
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
 }
 
 func renderBundleHTML(results Results) ([]byte, error) {

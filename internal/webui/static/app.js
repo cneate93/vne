@@ -41,6 +41,7 @@
         const ciscoPassInput = document.getElementById('cisco-pass');
         const ciscoSecretInput = document.getElementById('cisco-secret');
         const ciscoPortInput = document.getElementById('cisco-port');
+        const bundleBtn = document.getElementById('download-bundle');
 
         const PHASE_LABELS = {
                 idle: 'Idle',
@@ -101,12 +102,14 @@
                                 populatePerformanceCards(null);
                                 populateDevicesTable(null);
                                 populateVendorCard(null);
+                                setBundleAvailability(false);
                                 return;
                         }
                         if (!resp.ok) {
                                 resultsEl.textContent = '(Results not available yet)';
                                 populateDevicesTable(null);
                                 populateVendorCard(null);
+                                setBundleAvailability(false);
                                 return;
                         }
                         const data = await resp.json();
@@ -114,12 +117,14 @@
                         populatePerformanceCards(data);
                         populateDevicesTable(data && Array.isArray(data.discovered) ? data.discovered : null);
                         populateVendorCard(data);
+                        setBundleAvailability(true);
                 } catch (err) {
                         console.error(err);
                         resultsEl.textContent = '(Unable to load results)';
                         populatePerformanceCards(null);
                         populateDevicesTable(null);
                         populateVendorCard(null);
+                        setBundleAvailability(false);
                 }
         }
 
@@ -154,6 +159,7 @@
                         applyPhase('starting');
                         setProgress(5);
                         clearDevicesTable();
+                        setBundleAvailability(false);
                 } catch (err) {
                         console.error(err);
                         startError.textContent = 'Unexpected error starting diagnostics.';
@@ -219,6 +225,7 @@
                 if (data.reset) {
                         clearConsole();
                         resetVendorState();
+                        setBundleAvailability(false);
                 }
                 if (data.name) {
                         applyPhase(data.name);
@@ -254,6 +261,71 @@
                         resultsEl.textContent = '(Run failed)';
                         populatePerformanceCards(null);
                         populateDevicesTable(null);
+                        setBundleAvailability(false);
+                }
+        }
+
+        function setBundleAvailability(available) {
+                if (!bundleBtn) {
+                        return;
+                }
+                if (available) {
+                        bundleBtn.hidden = false;
+                        bundleBtn.disabled = false;
+                } else {
+                        bundleBtn.hidden = true;
+                        bundleBtn.disabled = false;
+                }
+        }
+
+        function parseBundleFilename(disposition) {
+                if (typeof disposition !== 'string' || disposition.trim() === '') {
+                        return '';
+                }
+                const utfMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+                if (utfMatch && utfMatch[1]) {
+                        try {
+                                return decodeURIComponent(utfMatch[1]);
+                        } catch (err) {
+                                console.error('Unable to decode filename', err);
+                        }
+                }
+                const simpleMatch = disposition.match(/filename="?([^";]+)"?/i);
+                if (simpleMatch && simpleMatch[1]) {
+                        return simpleMatch[1];
+                }
+                return '';
+        }
+
+        async function downloadBundle() {
+                if (!bundleBtn) {
+                        return;
+                }
+                bundleBtn.disabled = true;
+                try {
+                        const resp = await fetch('/api/bundle');
+                        if (resp.status === 204) {
+                                setBundleAvailability(false);
+                                return;
+                        }
+                        if (!resp.ok) {
+                                throw new Error('Bundle request failed');
+                        }
+                        const blob = await resp.blob();
+                        const url = URL.createObjectURL(blob);
+                        const disposition = resp.headers.get('Content-Disposition');
+                        const filename = parseBundleFilename(disposition) || 'vne-evidence.zip';
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.download = filename;
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        setTimeout(() => URL.revokeObjectURL(url), 1000);
+                } catch (err) {
+                        console.error(err);
+                } finally {
+                        bundleBtn.disabled = false;
                 }
         }
 
@@ -567,6 +639,12 @@
                 }
         }
 
+        if (bundleBtn) {
+                bundleBtn.addEventListener('click', () => {
+                        downloadBundle();
+                });
+        }
+
         if (vendorOpenBtn) {
                 vendorOpenBtn.addEventListener('click', () => {
                         if (lastVendorSuggestions.length > 0) {
@@ -667,4 +745,5 @@
 
         ensureStream();
         updateStatus();
+        setBundleAvailability(false);
 })();
