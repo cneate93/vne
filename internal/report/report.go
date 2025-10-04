@@ -6,8 +6,13 @@ import (
 	"os"
 	"time"
 
+	_ "embed"
+
 	"github.com/cneate93/vne/internal/probes"
 )
+
+//go:embed report_template.html
+var defaultReportTemplate string
 
 type Finding struct {
 	Severity string `json:"severity"`
@@ -36,7 +41,7 @@ type Results struct {
 func RenderHTML(r Results, tmplPath, outPath string) error {
 	tplBytes, err := os.ReadFile(tmplPath)
 	if err != nil {
-		return err
+		tplBytes = []byte(defaultReportTemplate)
 	}
 	tpl, err := template.New("rep").Parse(string(tplBytes))
 	if err != nil {
