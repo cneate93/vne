@@ -11,6 +11,7 @@ import (
 
 	"github.com/cneate93/vne/internal/packs"
 	"github.com/cneate93/vne/internal/probes"
+	"github.com/cneate93/vne/internal/progress"
 	"github.com/cneate93/vne/internal/report"
 	"github.com/cneate93/vne/internal/snmp"
 	"github.com/cneate93/vne/internal/sshx"
@@ -25,6 +26,10 @@ type stdPrinter struct{}
 
 type nopPrinter struct{}
 
+type progressPrinter struct {
+	sink progress.Reporter
+}
+
 func (stdPrinter) Println(args ...interface{}) {
 	fmt.Println(args...)
 }
@@ -37,6 +42,45 @@ func (nopPrinter) Println(args ...interface{}) {}
 
 func (nopPrinter) Printf(format string, args ...interface{}) {}
 
+func newProgressPrinter(sink progress.Reporter) RunPrinter {
+	if sink == nil {
+		return nopPrinter{}
+	}
+	return &progressPrinter{sink: sink}
+}
+
+func (p *progressPrinter) Println(args ...interface{}) {
+	if p == nil || p.sink == nil {
+		return
+	}
+	msg := fmt.Sprintln(args...)
+	p.forward(msg)
+}
+
+func (p *progressPrinter) Printf(format string, args ...interface{}) {
+	if p == nil || p.sink == nil {
+		return
+	}
+	msg := fmt.Sprintf(format, args...)
+	p.forward(msg)
+}
+
+func (p *progressPrinter) forward(msg string) {
+	if p == nil || p.sink == nil {
+		return
+	}
+	msg = strings.ReplaceAll(msg, "\r\n", "\n")
+	lines := strings.Split(msg, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		// Preserve indentation from the original line while removing trailing carriage returns.
+		p.sink.Step(strings.TrimRight(line, "\r"))
+	}
+}
+
 type RunOptions struct {
 	Count         int
 	Timeout       time.Duration
@@ -48,6 +92,7 @@ type RunOptions struct {
 	AutoPacks     bool
 	SNMPCfg       *snmpQuery
 	Printer       RunPrinter
+	Progress      progress.Reporter
 }
 
 func runDiagnostics(ctx RunContext, opts RunOptions) (report.Results, error) {
@@ -55,13 +100,20 @@ func runDiagnostics(ctx RunContext, opts RunOptions) (report.Results, error) {
 	if printer == nil {
 		printer = nopPrinter{}
 	}
+	reporter := opts.Progress
 	println := func(args ...interface{}) {
 		printer.Println(args...)
 	}
 	printf := func(format string, args ...interface{}) {
 		printer.Printf(format, args...)
 	}
+	phase := func(name string) {
+		if reporter != nil {
+			reporter.Phase(name)
+		}
+	}
 
+	phase("netinfo")
 	println("\n→ Collecting local network info…")
 	log.Println("Collecting local network info")
 	netInfo, err := probes.GetBasics()
@@ -75,6 +127,7 @@ func runDiagnostics(ctx RunContext, opts RunOptions) (report.Results, error) {
 	}
 
 	var l2Hosts []probes.L2Host
+	phase("l2-scan")
 	if opts.Scan {
 		println("→ Discovering local layer-2 neighbors (ping sweep)…")
 		log.Println("Running layer-2 discovery")
@@ -91,6 +144,7 @@ func runDiagnostics(ctx RunContext, opts RunOptions) (report.Results, error) {
 	}
 
 	var gwPing probes.PingResult
+	phase("gateway")
 	if gw != "" {
 		println("→ Pinging default gateway:", gw)
 		log.Println("Pinging default gateway", gw)
@@ -100,25 +154,30 @@ func runDiagnostics(ctx RunContext, opts RunOptions) (report.Results, error) {
 		log.Println("No default gateway detected; skipping gateway ping")
 	}
 
+	phase("dns")
 	println("→ Testing DNS lookups…")
 	log.Println("Testing DNS lookups")
 	dnsLocal, _ := probes.DNSLookupTimed("cloudflare.com", netInfo.DNSServers, opts.Timeout)
 	dnsCF, _ := probes.DNSLookupTimed("cloudflare.com", []string{"1.1.1.1"}, opts.Timeout)
 
+	phase("wan")
 	println("→ Pinging internet target:", ctx.TargetHost)
 	log.Println("Pinging internet target", ctx.TargetHost)
 	wanPing, _ := probes.PingHost(ctx.TargetHost, opts.Count, opts.Timeout)
 
+	phase("traceroute")
 	println("→ Traceroute (this may take ~10–20 seconds)…")
 	log.Println("Running traceroute")
 	traceOut, _ := probes.Trace(ctx.TargetHost, 20, opts.Timeout)
 
+	phase("mtu")
 	println("→ MTU / Path MTU probe…")
 	log.Println("Running MTU / Path MTU probe")
 	mtu, _ := probes.MTUCheck(ctx.TargetHost)
 
 	var autoPackFindings []report.Finding
 	if opts.AutoPacks && !opts.SkipPython {
+		phase("python-packs")
 		selected := packs.PacksFor(l2Hosts)
 		if len(selected) > 0 {
 			log.Printf("Auto-selected vendor packs: %v", selected)
@@ -150,6 +209,8 @@ func runDiagnostics(ctx RunContext, opts RunOptions) (report.Results, error) {
 		if (ctx.UsePythonFortigate || ctx.UsePythonCisco) && ctx.PythonPath == "" {
 			ctx.PythonPath = defaultPythonPath()
 		}
+	} else if reporter != nil && !opts.SkipPython {
+		phase("python-packs")
 	}
 
 	var fortiRaw map[string]any
@@ -207,6 +268,7 @@ func runDiagnostics(ctx RunContext, opts RunOptions) (report.Results, error) {
 
 	var ifaceHealth *snmp.InterfaceHealth
 	if opts.SNMPCfg != nil {
+		phase("snmp")
 		println("\n→ Fetching SNMP interface health…")
 		log.Printf("Fetching SNMP interface health from %s (%s)", opts.SNMPCfg.Host, opts.SNMPCfg.Iface)
 		snmpCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -223,6 +285,7 @@ func runDiagnostics(ctx RunContext, opts RunOptions) (report.Results, error) {
 		}
 	}
 
+	phase("finalizing")
 	findings := append([]report.Finding{}, autoPackFindings...)
 	if gw != "" && gwPing.Loss > 0.3 {
 		findings = append(findings, report.Finding{
