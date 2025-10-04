@@ -20,29 +20,60 @@ func DNSLookupTimed(host string, resolvers []string, timeout time.Duration) (DNS
 		timeout = 10 * time.Second
 	}
 
+	baseCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	deadline, hasDeadline := baseCtx.Deadline()
+
 	var total float64
 	var count int
 	answers := make([]string, 0)
 
 	for _, resolver := range resolvers {
-		r := net.Resolver{}
-		if resolver != "" {
-			dialer := func(ctx context.Context, network, address string) (net.Conn, error) {
-				d := &net.Dialer{Timeout: timeout}
-				return d.DialContext(ctx, network, net.JoinHostPort(resolver, "53"))
+		remaining := timeout
+		if hasDeadline {
+			remaining = time.Until(deadline)
+			if remaining <= 0 {
+				break
 			}
-			r = net.Resolver{PreferGo: true, Dial: dialer}
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		lookupCtx, lookupCancel := context.WithTimeout(baseCtx, remaining)
+
+		r := net.Resolver{}
+		resolverAddr := resolver
+		if resolverAddr != "" {
+			r = net.Resolver{
+				PreferGo: true,
+				Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+					timeoutForDial := remaining
+					if hasDeadline {
+						if until := time.Until(deadline); until < timeoutForDial {
+							timeoutForDial = until
+						}
+						if timeoutForDial <= 0 {
+							return nil, context.DeadlineExceeded
+						}
+					}
+
+					d := &net.Dialer{Timeout: timeoutForDial}
+					return d.DialContext(ctx, network, net.JoinHostPort(resolverAddr, "53"))
+				},
+			}
+		}
+
 		start := time.Now()
-		ips, err := r.LookupHost(ctx, host)
+		ips, err := r.LookupHost(lookupCtx, host)
 		elapsed := time.Since(start).Seconds() * 1000
-		cancel()
+		lookupCancel()
 		if err == nil {
 			total += elapsed
 			count++
 			answers = append(answers, ips...)
+		}
+
+		if hasDeadline && time.Until(deadline) <= 0 {
+			break
 		}
 	}
 
