@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/cneate93/vne/internal/logx"
+	"github.com/cneate93/vne/internal/packs"
 	"github.com/cneate93/vne/internal/probes"
 	"github.com/cneate93/vne/internal/report"
 	"github.com/cneate93/vne/internal/snmp"
@@ -132,6 +133,15 @@ func main() {
 	serveFlag := flag.Bool("serve", false, "Serve the generated report over HTTP on :8080")
 	openFlag := flag.Bool("open", false, "Open the generated report after creation")
 	pythonFlag := flag.String("python", "", "Path to python executable for optional packs")
+	autoPacksFlag := flag.Bool("auto-packs", false, "Automatically run vendor-specific packs when detected")
+	fortiHostFlag := flag.String("forti-host", "", "FortiGate host/IP for optional Python pack")
+	fortiUserFlag := flag.String("forti-user", "", "FortiGate username for optional Python pack")
+	fortiPassFlag := flag.String("forti-pass", "", "FortiGate password for optional Python pack")
+	ciscoHostFlag := flag.String("cisco-host", "", "Cisco IOS host/IP for optional Python pack")
+	ciscoUserFlag := flag.String("cisco-user", "", "Cisco IOS username for optional Python pack")
+	ciscoPassFlag := flag.String("cisco-pass", "", "Cisco IOS password for optional Python pack")
+	ciscoSecretFlag := flag.String("cisco-secret", "", "Cisco IOS enable secret for optional Python pack")
+	ciscoPortFlag := flag.Int("cisco-port", 22, "Cisco IOS SSH port (default 22)")
 	verboseFlag := flag.Bool("verbose", false, "Enable verbose logging to vne.log")
 	bundleFlag := flag.Bool("bundle", false, "Write zipped evidence bundle (vne-evidence-YYYYMMDD-HHMM.zip)")
 	jsonFlag := flag.String("json", "", "Write report data as indented JSON to the given path")
@@ -151,6 +161,7 @@ func main() {
 		flagsSet[f.Name] = true
 	})
 	nonInteractive := flagsSet["target"] || flagsSet["out"] || flagsSet["skip-python"]
+	autoPacksRequested := *autoPacksFlag
 
 	snmpCfg, err := parseSNMPFlag(*snmpFlag)
 	if err != nil {
@@ -164,6 +175,15 @@ func main() {
 		TargetHost: "1.1.1.1",
 		CiscoPort:  22,
 	}
+
+	ctx.FortiHost = stringFlagOrEnv(*fortiHostFlag, flagsSet["forti-host"], "FORTI_HOST", "FORTIGATE_HOST")
+	ctx.FortiUser = stringFlagOrEnv(*fortiUserFlag, flagsSet["forti-user"], "FORTI_USER", "FORTIGATE_USER")
+	ctx.FortiPass = stringFlagOrEnv(*fortiPassFlag, flagsSet["forti-pass"], "FORTI_PASS", "FORTI_PASSWORD", "FORTIGATE_PASS", "FORTIGATE_PASSWORD")
+	ctx.CiscoHost = stringFlagOrEnv(*ciscoHostFlag, flagsSet["cisco-host"], "CISCO_HOST")
+	ctx.CiscoUser = stringFlagOrEnv(*ciscoUserFlag, flagsSet["cisco-user"], "CISCO_USER")
+	ctx.CiscoPass = stringFlagOrEnv(*ciscoPassFlag, flagsSet["cisco-pass"], "CISCO_PASS", "CISCO_PASSWORD")
+	ctx.CiscoSecret = stringFlagOrEnv(*ciscoSecretFlag, flagsSet["cisco-secret"], "CISCO_SECRET")
+	ctx.CiscoPort = intFlagOrEnv(ctx.CiscoPort, *ciscoPortFlag, flagsSet["cisco-port"], "CISCO_PORT")
 
 	if *targetFlag != "" {
 		ctx.TargetHost = *targetFlag
@@ -188,43 +208,47 @@ func main() {
 		log.Printf("SNMP query configured for host %s interface %s", snmpCfg.Host, snmpCfg.Iface)
 	}
 
-	if nonInteractive {
-		if !*skipPythonFlag {
+	if *skipPythonFlag {
+		if nonInteractive {
+			log.Println("Skipping optional Python packs (requested via --skip-python).")
+		} else {
+			fmt.Println("→ Skipping optional Python packs (requested via --skip-python).")
+		}
+	} else if !autoPacksRequested {
+		if nonInteractive {
 			log.Println("Skipping optional Python packs in non-interactive mode; use interactive mode to supply credentials if needed.")
-		}
-	} else if *skipPythonFlag {
-		fmt.Println("→ Skipping optional Python packs (requested via --skip-python).")
-	} else {
-		if yesno("Do you want to run the FortiGate Python pack (optional)?") {
-			ctx.UsePythonFortigate = true
-			ctx.FortiHost = prompt("FortiGate host/IP: ")
-			ctx.FortiUser = prompt("FortiGate username: ")
-			ctx.FortiPass = prompt("FortiGate password (will not be stored): ")
-		}
-		if yesno("Do you want to run the Cisco IOS Python pack (optional)?") {
-			ctx.UsePythonCisco = true
-			ctx.CiscoHost = prompt("Cisco IOS host/IP: ")
-			ctx.CiscoUser = prompt("Cisco IOS username: ")
-			ctx.CiscoPass = prompt("Cisco IOS password (will not be stored): ")
-			ctx.CiscoSecret = prompt("Cisco IOS enable secret (optional): ")
-			portStr := prompt("Cisco IOS SSH port (default 22): ")
-			if portStr != "" {
-				if p, err := strconv.Atoi(portStr); err == nil && p > 0 {
-					ctx.CiscoPort = p
-				} else {
-					fmt.Println("  Invalid port provided; defaulting to 22.")
-					ctx.CiscoPort = 22
+		} else {
+			if yesno("Do you want to run the FortiGate Python pack (optional)?") {
+				ctx.UsePythonFortigate = true
+				ctx.FortiHost = prompt("FortiGate host/IP: ")
+				ctx.FortiUser = prompt("FortiGate username: ")
+				ctx.FortiPass = prompt("FortiGate password (will not be stored): ")
+			}
+			if yesno("Do you want to run the Cisco IOS Python pack (optional)?") {
+				ctx.UsePythonCisco = true
+				ctx.CiscoHost = prompt("Cisco IOS host/IP: ")
+				ctx.CiscoUser = prompt("Cisco IOS username: ")
+				ctx.CiscoPass = prompt("Cisco IOS password (will not be stored): ")
+				ctx.CiscoSecret = prompt("Cisco IOS enable secret (optional): ")
+				portStr := prompt("Cisco IOS SSH port (default 22): ")
+				if portStr != "" {
+					if p, err := strconv.Atoi(portStr); err == nil && p > 0 {
+						ctx.CiscoPort = p
+					} else {
+						fmt.Println("  Invalid port provided; defaulting to 22.")
+						ctx.CiscoPort = 22
+					}
 				}
 			}
-		}
-		if (ctx.UsePythonFortigate || ctx.UsePythonCisco) && ctx.PythonPath == "" {
-			defPy := defaultPythonPath()
-			promptMsg := fmt.Sprintf("Path to python executable (default '%s'): ", defPy)
-			pp := prompt(promptMsg)
-			if pp == "" {
-				ctx.PythonPath = defPy
-			} else {
-				ctx.PythonPath = pp
+			if (ctx.UsePythonFortigate || ctx.UsePythonCisco) && ctx.PythonPath == "" {
+				defPy := defaultPythonPath()
+				promptMsg := fmt.Sprintf("Path to python executable (default '%s'): ", defPy)
+				pp := prompt(promptMsg)
+				if pp == "" {
+					ctx.PythonPath = defPy
+				} else {
+					ctx.PythonPath = pp
+				}
 			}
 		}
 	}
@@ -290,6 +314,41 @@ func main() {
 	fmt.Println("→ MTU / Path MTU probe…")
 	log.Println("Running MTU / Path MTU probe")
 	mtu, _ := probes.MTUCheck(ctx.TargetHost)
+
+	var autoPackFindings []report.Finding
+	if autoPacksRequested && !*skipPythonFlag {
+		selected := packs.PacksFor(l2Hosts)
+		if len(selected) > 0 {
+			log.Printf("Auto-selected vendor packs: %v", selected)
+		}
+		for _, key := range selected {
+			switch key {
+			case "fortigate":
+				if ctx.FortiHost != "" && ctx.FortiUser != "" && ctx.FortiPass != "" {
+					ctx.UsePythonFortigate = true
+				} else {
+					autoPackFindings = append(autoPackFindings, report.Finding{
+						Severity: "info",
+						Message:  "Detected Fortinet device(s): supply --forti-host, --forti-user, and --forti-pass to run vendor pack.",
+					})
+					log.Println("Detected Fortinet device(s) but missing FortiGate credentials; skipping auto pack run.")
+				}
+			case "cisco_ios":
+				if ctx.CiscoHost != "" && ctx.CiscoUser != "" && ctx.CiscoPass != "" {
+					ctx.UsePythonCisco = true
+				} else {
+					autoPackFindings = append(autoPackFindings, report.Finding{
+						Severity: "info",
+						Message:  "Detected Cisco device(s): supply --cisco-host, --cisco-user, and --cisco-pass to run vendor pack.",
+					})
+					log.Println("Detected Cisco device(s) but missing Cisco IOS credentials; skipping auto pack run.")
+				}
+			}
+		}
+		if (ctx.UsePythonFortigate || ctx.UsePythonCisco) && ctx.PythonPath == "" {
+			ctx.PythonPath = defaultPythonPath()
+		}
+	}
 
 	// 7) Optional FortiGate Python pack
 	var fortiRaw map[string]any
@@ -364,6 +423,7 @@ func main() {
 
 	// 8) Findings / heuristics (simple)
 	var findings []report.Finding
+	findings = append(findings, autoPackFindings...)
 	if gw != "" && gwPing.Loss > 0.3 {
 		findings = append(findings, report.Finding{
 			Severity: "high",
@@ -563,4 +623,46 @@ func writeJSONResults(jsonPath string, res report.Results) error {
 	}
 
 	return nil
+}
+
+func stringFlagOrEnv(flagVal string, flagSet bool, envKeys ...string) string {
+	val := strings.TrimSpace(flagVal)
+	if flagSet {
+		return val
+	}
+	if val != "" {
+		return val
+	}
+	for _, key := range envKeys {
+		if key == "" {
+			continue
+		}
+		if envVal := strings.TrimSpace(os.Getenv(key)); envVal != "" {
+			return envVal
+		}
+	}
+	return ""
+}
+
+func intFlagOrEnv(defaultVal, flagVal int, flagSet bool, envKeys ...string) int {
+	if flagSet {
+		if flagVal > 0 {
+			return flagVal
+		}
+		return defaultVal
+	}
+	for _, key := range envKeys {
+		if key == "" {
+			continue
+		}
+		if envVal := strings.TrimSpace(os.Getenv(key)); envVal != "" {
+			if parsed, err := strconv.Atoi(envVal); err == nil && parsed > 0 {
+				return parsed
+			}
+		}
+	}
+	if flagVal > 0 {
+		return flagVal
+	}
+	return defaultVal
 }
