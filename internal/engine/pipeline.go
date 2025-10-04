@@ -131,7 +131,7 @@ func Run(ctx context.Context, params Params) (report.Results, error) {
 		if err := checkCtx(); err != nil {
 			return report.Results{}, err
 		}
-		if hosts, err := probes.L2Scan(scanTimeout, maxHosts, cidrLimit); err == nil {
+		if hosts, err := probes.L2Scan(ctx, scanTimeout, maxHosts, cidrLimit); err == nil {
 			l2Hosts = hosts
 			if len(l2Hosts) == 0 {
 				printer.Println("  No L2 hosts discovered (ARP cache empty).")
