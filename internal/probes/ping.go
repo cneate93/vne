@@ -2,12 +2,15 @@ package probes
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"os/exec"
 	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type PingResult struct {
@@ -16,23 +19,32 @@ type PingResult struct {
 	Raw   string  `json:"raw"`
 }
 
-func PingHost(target string, count int) (PingResult, error) {
+func PingHost(target string, count int, timeout time.Duration) (PingResult, error) {
 	if count <= 0 {
 		count = 4
 	}
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":
-		cmd = exec.Command("ping", "-n", strconv.Itoa(count), target)
+		cmd = exec.CommandContext(ctx, "ping", "-n", strconv.Itoa(count), target)
 	default:
-		cmd = exec.Command("ping", "-c", strconv.Itoa(count), "-n", target)
+		cmd = exec.CommandContext(ctx, "ping", "-c", strconv.Itoa(count), "-n", target)
 	}
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	output, err := cmd.Output()
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			err = fmt.Errorf("ping timed out after %s", timeout)
+		}
 		// When ping exits with a non-zero status we still want to surface the raw output.
 		// If no output was produced, fall back to stderr for context.
 		if len(output) == 0 {
