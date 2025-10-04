@@ -46,6 +46,44 @@
                         <p id="status-message" class="status-message">Ready</p>
                 </section>
 
+                <section class="card" id="lan-card" hidden>
+                        <h2>LAN Performance</h2>
+                        <p class="card-subtitle">Default gateway: <span id="lan-dest">(detecting…)</span></p>
+                        <div class="metric-grid">
+                                <div class="metric">
+                                        <span class="label">Avg RTT</span>
+                                        <span id="lan-avg" class="metric-value">—</span>
+                                </div>
+                                <div class="metric">
+                                        <span class="label">95th Percentile</span>
+                                        <span id="lan-p95" class="metric-value">—</span>
+                                </div>
+                                <div class="metric">
+                                        <span class="label">Jitter</span>
+                                        <span id="lan-jitter" class="metric-value">—</span>
+                                </div>
+                        </div>
+                </section>
+
+                <section class="card" id="wan-card" hidden>
+                        <h2>WAN Performance</h2>
+                        <p class="card-subtitle">Target host: <span id="wan-dest">(detecting…)</span></p>
+                        <div class="metric-grid">
+                                <div class="metric">
+                                        <span class="label">Avg RTT</span>
+                                        <span id="wan-avg" class="metric-value">—</span>
+                                </div>
+                                <div class="metric">
+                                        <span class="label">95th Percentile</span>
+                                        <span id="wan-p95" class="metric-value">—</span>
+                                </div>
+                                <div class="metric">
+                                        <span class="label">Jitter</span>
+                                        <span id="wan-jitter" class="metric-value">—</span>
+                                </div>
+                        </div>
+                </section>
+
                 <section class="card">
                         <h2>Console</h2>
                         <div id="console" class="console" aria-live="polite" aria-atomic="false">

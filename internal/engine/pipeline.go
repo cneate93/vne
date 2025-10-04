@@ -4,9 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -37,8 +34,6 @@ type noopPrinter struct{}
 
 func (noopPrinter) Println(...interface{})        {}
 func (noopPrinter) Printf(string, ...interface{}) {}
-
-var pingTimeRe = regexp.MustCompile(`(?i)time[=<]?\s*([0-9]+(?:\.[0-9]+)?)\s*ms`)
 
 func Run(ctx context.Context, params Params) (report.Results, error) {
 	reporter := params.Reporter
@@ -214,9 +209,6 @@ func Run(ctx context.Context, params Params) (report.Results, error) {
 	}
 	mtu, _ = probes.MTUCheck(target)
 
-	gwJitter := computeJitter(gwPing.Raw)
-	wanJitter := computeJitter(wanPing.Raw)
-
 	findings := make([]report.Finding, 0)
 	if gw != "" && gwPing.Loss > 0.3 {
 		findings = append(findings, report.Finding{
@@ -254,7 +246,7 @@ func Run(ctx context.Context, params Params) (report.Results, error) {
 		})
 	}
 
-	classification, reasons := classify(netInfo, gwPing, wanPing, dnsLocal, mtu, gwJitter, wanJitter)
+	classification, reasons := classify(netInfo, gwPing, wanPing, dnsLocal, mtu)
 
 	res := report.Results{
 		When:           time.Now(),
@@ -272,8 +264,8 @@ func Run(ctx context.Context, params Params) (report.Results, error) {
 		TargetHost:     target,
 		HasGateway:     gw != "",
 		GatewayUsed:    gw,
-		GwJitterMs:     gwJitter,
-		WanJitterMs:    wanJitter,
+		GwJitterMs:     gwPing.JitterMs,
+		WanJitterMs:    wanPing.JitterMs,
 		Classification: classification,
 		Reasons:        reasons,
 	}
@@ -287,7 +279,7 @@ type classificationIssue struct {
 	severity int
 }
 
-func classify(netInfo probes.NetInfo, gwPing, wanPing probes.PingResult, dnsLocal probes.DNSResult, mtu probes.MTUResult, gwJitter, wanJitter float64) (string, []string) {
+func classify(netInfo probes.NetInfo, gwPing, wanPing probes.PingResult, dnsLocal probes.DNSResult, mtu probes.MTUResult) (string, []string) {
 	const (
 		gwLossThreshold    = 0.1
 		gwJitterThreshold  = 20
@@ -299,21 +291,21 @@ func classify(netInfo probes.NetInfo, gwPing, wanPing probes.PingResult, dnsLoca
 	)
 
 	hasGateway := netInfo.DefaultGateway != "" || len(netInfo.Gateways) > 0
-	gatewayBad := hasGateway && (gwPing.Loss >= gwLossThreshold || gwJitter >= gwJitterThreshold)
-	wanBad := wanPing.Loss >= wanLossThreshold || wanJitter >= wanJitterThreshold
+	gatewayBad := hasGateway && (gwPing.Loss >= gwLossThreshold || gwPing.JitterMs >= gwJitterThreshold)
+	wanBad := wanPing.Loss >= wanLossThreshold || wanPing.JitterMs >= wanJitterThreshold
 
 	issues := make([]classificationIssue, 0)
 	if gatewayBad {
 		issues = append(issues, classificationIssue{
 			label:    "LAN problem likely",
-			reason:   fmt.Sprintf("Gateway ping unstable (loss %.1f%%, jitter %.1f ms)", gwPing.Loss*100, gwJitter),
+			reason:   fmt.Sprintf("Gateway ping unstable (loss %.1f%%, jitter %.1f ms)", gwPing.Loss*100, gwPing.JitterMs),
 			severity: 3,
 		})
 	}
 	if !gatewayBad && wanBad {
 		issues = append(issues, classificationIssue{
 			label:    "WAN/ISP issue likely",
-			reason:   fmt.Sprintf("WAN target showing impairment (loss %.1f%%, jitter %.1f ms)", wanPing.Loss*100, wanJitter),
+			reason:   fmt.Sprintf("WAN target showing impairment (loss %.1f%%, jitter %.1f ms)", wanPing.Loss*100, wanPing.JitterMs),
 			severity: 2,
 		})
 	}
@@ -351,49 +343,4 @@ func classify(netInfo probes.NetInfo, gwPing, wanPing probes.PingResult, dnsLoca
 	}
 
 	return classification, reasons
-}
-
-func computeJitter(raw string) float64 {
-	matches := pingTimeRe.FindAllStringSubmatch(raw, -1)
-	if len(matches) < 2 {
-		return 0
-	}
-	samples := make([]float64, 0, len(matches))
-	for _, m := range matches {
-		if len(m) < 2 {
-			continue
-		}
-		v, err := strconv.ParseFloat(m[1], 64)
-		if err != nil {
-			continue
-		}
-		samples = append(samples, v)
-	}
-	if len(samples) < 2 {
-		return 0
-	}
-	deltas := make([]float64, 0, len(samples)-1)
-	prev := samples[0]
-	for _, sample := range samples[1:] {
-		deltas = append(deltas, sample-prev)
-		prev = sample
-	}
-	if len(deltas) == 0 {
-		return 0
-	}
-	var sum float64
-	for _, d := range deltas {
-		sum += d
-	}
-	mean := sum / float64(len(deltas))
-	var variance float64
-	for _, d := range deltas {
-		diff := d - mean
-		variance += diff * diff
-	}
-	variance /= float64(len(deltas))
-	if variance < 0 {
-		variance = 0
-	}
-	return math.Sqrt(variance)
 }
