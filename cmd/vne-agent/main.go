@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cneate93/vne/internal/logx"
 	"github.com/cneate93/vne/internal/probes"
 	"github.com/cneate93/vne/internal/report"
 	"github.com/cneate93/vne/internal/sshx"
@@ -53,7 +54,14 @@ func main() {
 	skipPythonFlag := flag.Bool("skip-python", false, "Skip the optional FortiGate Python pack")
 	serveFlag := flag.Bool("serve", false, "Serve the generated report over HTTP on :8080")
 	pythonFlag := flag.String("python", "", "Path to python executable for the FortiGate pack")
+	verboseFlag := flag.Bool("verbose", false, "Enable verbose logging to vne.log")
 	flag.Parse()
+
+	if err := logx.Configure(*verboseFlag); err != nil {
+		fmt.Println("Unable to enable verbose logging:", err)
+	} else if *verboseFlag {
+		defer logx.Close()
+	}
 
 	flagsSet := map[string]bool{}
 	flag.CommandLine.Visit(func(f *flag.Flag) {
@@ -84,6 +92,8 @@ func main() {
 			ctx.TargetHost = th
 		}
 	}
+
+	log.Printf("Using target host: %s", ctx.TargetHost)
 
 	if nonInteractive {
 		if !*skipPythonFlag {
@@ -117,6 +127,7 @@ func main() {
 
 	// 1) Local network info
 	fmt.Println("\n→ Collecting local network info…")
+	log.Println("Collecting local network info")
 	netInfo, err := probes.GetBasics()
 	if err != nil {
 		log.Println("netinfo error:", err)
@@ -132,32 +143,39 @@ func main() {
 	var gwPing probes.PingResult
 	if gw != "" {
 		fmt.Println("→ Pinging default gateway:", gw)
+		log.Println("Pinging default gateway", gw)
 		gwPing, _ = probes.PingHost(gw, 10)
 	} else {
 		fmt.Println("→ No default gateway detected; skipping gateway ping.")
+		log.Println("No default gateway detected; skipping gateway ping")
 	}
 
 	// 3) DNS lookups
 	fmt.Println("→ Testing DNS lookups…")
+	log.Println("Testing DNS lookups")
 	dnsLocal, _ := probes.DNSLookupTimed("cloudflare.com", netInfo.DNSServers)
 	dnsCF, _ := probes.DNSLookupTimed("cloudflare.com", []string{"1.1.1.1"})
 
 	// 4) WAN ping/jitter
 	fmt.Println("→ Pinging internet target:", ctx.TargetHost)
+	log.Println("Pinging internet target", ctx.TargetHost)
 	wanPing, _ := probes.PingHost(ctx.TargetHost, 20)
 
 	// 5) Trace
 	fmt.Println("→ Traceroute (this may take ~10–20 seconds)…")
+	log.Println("Running traceroute")
 	traceOut, _ := probes.Trace(ctx.TargetHost, 20)
 
 	// 6) MTU probe
 	fmt.Println("→ MTU / Path MTU probe…")
+	log.Println("Running MTU / Path MTU probe")
 	mtu, _ := probes.MTUCheck(ctx.TargetHost)
 
 	// 7) Optional FortiGate Python pack
 	var fortiRaw map[string]any
 	if ctx.UsePythonFortigate {
 		fmt.Println("→ Running FortiGate Python pack…")
+		log.Println("Running FortiGate Python pack")
 		packDir := filepath.Join("packs", "python", "fortigate")
 		payload := map[string]any{
 			"host":     ctx.FortiHost,
@@ -223,10 +241,12 @@ func main() {
 		GatewayUsed: gw,
 	}
 
+	log.Println("Rendering HTML report to", outPath)
 	if err := report.RenderHTML(res, "assets/report_template.html", outPath); err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println("\n✅ Done. Report written to:", outPath)
+	log.Println("Report generation complete")
 
 	if *serveFlag {
 		relPath := outPath
