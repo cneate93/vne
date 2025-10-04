@@ -26,46 +26,72 @@ func Trace(target string, maxHops int, timeout time.Duration) (TraceResult, erro
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	var cmd *exec.Cmd
+	var (
+		cmd         *exec.Cmd
+		commandName string
+	)
 	switch runtime.GOOS {
 	case "windows":
-		cmd = exec.CommandContext(ctx, "tracert", "-d", "-h", strconv.Itoa(maxHops), target)
-	default:
-		if _, err := exec.LookPath("traceroute"); err == nil {
-			cmd = exec.CommandContext(ctx, "traceroute", "-n", "-m", strconv.Itoa(maxHops), target)
-		} else {
-			// Fallback to tracepath if traceroute is unavailable.
-			cmd = exec.CommandContext(ctx, "tracepath", "-n", target)
+		if _, err := exec.LookPath("tracert"); err != nil {
+			msg := "tracert command not found on Windows; install the tracert utility to enable traceroute."
+			return TraceResult{Raw: msg}, fmt.Errorf("tracert lookup failed: %w", err)
 		}
+		commandName = "tracert"
+		cmd = exec.CommandContext(ctx, commandName, "-d", "-h", strconv.Itoa(maxHops), target)
+	case "linux":
+		if _, err := exec.LookPath("traceroute"); err == nil {
+			commandName = "traceroute"
+			cmd = exec.CommandContext(ctx, commandName, "-n", "-m", strconv.Itoa(maxHops), target)
+		} else {
+			tracerouteErr := err
+			if _, err := exec.LookPath("tracepath"); err == nil {
+				commandName = "tracepath"
+				cmd = exec.CommandContext(ctx, commandName, "-n", target)
+			} else {
+				msg := "Neither traceroute nor tracepath commands were found on this Linux system. Install traceroute to enable network path tracing."
+				return TraceResult{Raw: msg}, fmt.Errorf("no traceroute utility found: traceroute: %w, tracepath: %v", tracerouteErr, err)
+			}
+		}
+	default:
+		if _, err := exec.LookPath("traceroute"); err != nil {
+			msg := "traceroute command not found; install traceroute to enable network path tracing."
+			return TraceResult{Raw: msg}, fmt.Errorf("traceroute lookup failed: %w", err)
+		}
+		commandName = "traceroute"
+		cmd = exec.CommandContext(ctx, commandName, "-n", "-m", strconv.Itoa(maxHops), target)
 	}
 
 	out, err := cmd.CombinedOutput()
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) && len(out) == 0 {
-		out = []byte(fmt.Sprintf("traceroute timed out after %s", timeout))
+	raw := strings.TrimSpace(string(out))
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) && raw == "" {
+		raw = fmt.Sprintf("traceroute timed out after %s", timeout)
 	}
-	result := TraceResult{Raw: string(out)}
-	if err != nil && runtime.GOOS == "windows" {
-		trimmed := strings.TrimSpace(result.Raw)
-		switch {
-		case errors.Is(err, exec.ErrNotFound):
-			result.Raw = "tracert command not found on Windows; unable to run traceroute."
-		case trimmed != "":
-			result.Raw = trimmed
-		default:
-			var exitErr *exec.ExitError
-			if errors.As(err, &exitErr) {
-				result.Raw = fmt.Sprintf("tracert exited with code %d and produced no output.", exitErr.ExitCode())
-			} else {
-				result.Raw = fmt.Sprintf("failed to run tracert: %v", err)
+
+	if err != nil {
+		if raw == "" {
+			switch {
+			case runtime.GOOS == "windows" && errors.Is(err, exec.ErrNotFound):
+				raw = "tracert command not found on Windows; unable to run traceroute."
+			case errors.Is(err, exec.ErrNotFound):
+				raw = fmt.Sprintf("%s command not found; ensure it is installed and available in PATH.", commandName)
+			default:
+				var exitErr *exec.ExitError
+				if errors.As(err, &exitErr) {
+					raw = fmt.Sprintf("%s exited with code %d and produced no output.", commandName, exitErr.ExitCode())
+				} else {
+					raw = fmt.Sprintf("failed to run %s: %v", commandName, err)
+				}
 			}
 		}
+		return TraceResult{Raw: raw}, err
 	}
-	if err != nil {
-		return result, err
+
+	if raw == "" {
+		if commandName == "" {
+			commandName = "traceroute"
+		}
+		raw = fmt.Sprintf("%s completed without producing output.", commandName)
 	}
-	// tracepath default limit may differ; annotate hops if necessary.
-	if runtime.GOOS != "windows" && strings.Contains(cmd.Path, "tracepath") {
-		result.Raw = strings.TrimSpace(result.Raw)
-	}
-	return result, nil
+
+	return TraceResult{Raw: raw}, nil
 }
