@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"vne/internal/probes"
+	"github.com/cneate93/vne/internal/probes"
 )
 
 type Finding struct {

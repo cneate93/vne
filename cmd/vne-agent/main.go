@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"vne/internal/probes"
-	"vne/internal/report"
-	"vne/internal/sshx"
+	"github.com/cneate93/vne/internal/probes"
+	"github.com/cneate93/vne/internal/report"
+	"github.com/cneate93/vne/internal/sshx"
 )
 
 type RunContext struct {
@@ -191,6 +191,5 @@ func main() {
 }
 
 func isWindows() bool {
-	// Best-effort detection (works for our simple prompt default)
 	return strings.Contains(strings.ToLower(os.Getenv("OS")), "windows")
 }
