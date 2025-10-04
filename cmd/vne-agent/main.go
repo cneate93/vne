@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/cneate93/vne/internal/logx"
+	"github.com/cneate93/vne/internal/progress"
 	"github.com/cneate93/vne/internal/report"
 	"github.com/cneate93/vne/internal/webui"
 )
@@ -166,7 +167,7 @@ func main() {
 	autoPacksRequested := *autoPacksFlag
 
 	if *webFlag {
-		srv, err := webui.NewServer(func(_ context.Context, req webui.RunRequest) (report.Results, error) {
+		srv, err := webui.NewServer(func(_ context.Context, req webui.RunRequest, reporter progress.Reporter) (report.Results, error) {
 			runCtx := RunContext{
 				TargetHost: "1.1.1.1",
 				CiscoPort:  22,
@@ -184,7 +185,8 @@ func main() {
 				SkipPython:    true,
 				AutoPacks:     false,
 				SNMPCfg:       nil,
-				Printer:       nopPrinter{},
+				Printer:       newProgressPrinter(reporter),
+				Progress:      reporter,
 			}
 			return runDiagnostics(runCtx, opts)
 		})
