@@ -59,6 +59,7 @@ func main() {
 	pythonFlag := flag.String("python", "", "Path to python executable for the FortiGate pack")
 	verboseFlag := flag.Bool("verbose", false, "Enable verbose logging to vne.log")
 	bundleFlag := flag.Bool("bundle", false, "Write zipped evidence bundle (vne-evidence-YYYYMMDD-HHMM.zip)")
+	jsonFlag := flag.String("json", "", "Write report data as indented JSON to the given path")
 	flag.Parse()
 
 	if err := logx.Configure(*verboseFlag); err != nil {
@@ -251,6 +252,20 @@ func main() {
 	}
 	fmt.Println("\n✅ Done. Report written to:", outPath)
 	log.Println("Report generation complete")
+
+	if *jsonFlag != "" {
+		jsonPath := *jsonFlag
+		data, err := json.MarshalIndent(res, "", "  ")
+		if err != nil {
+			log.Fatalf("failed to marshal JSON results: %v", err)
+		}
+		data = append(data, '\n')
+		if err := os.WriteFile(jsonPath, data, 0o644); err != nil {
+			log.Fatalf("failed to write JSON results: %v", err)
+		}
+		fmt.Println("→ JSON results written to:", jsonPath)
+		log.Println("JSON results written to", jsonPath)
+	}
 
 	if *bundleFlag {
 		bundleName := fmt.Sprintf("vne-evidence-%s.zip", res.When.Format("20060102-1504"))
