@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -53,6 +55,7 @@ func main() {
 	outFlag := flag.String("out", "", "Output HTML report path (default vne-report.html)")
 	skipPythonFlag := flag.Bool("skip-python", false, "Skip the optional FortiGate Python pack")
 	serveFlag := flag.Bool("serve", false, "Serve the generated report over HTTP on :8080")
+	openFlag := flag.Bool("open", false, "Open the generated report after creation")
 	pythonFlag := flag.String("python", "", "Path to python executable for the FortiGate pack")
 	verboseFlag := flag.Bool("verbose", false, "Enable verbose logging to vne.log")
 	flag.Parse()
@@ -248,6 +251,30 @@ func main() {
 	fmt.Println("\n✅ Done. Report written to:", outPath)
 	log.Println("Report generation complete")
 
+	if *openFlag {
+		absPath, err := filepath.Abs(outPath)
+		if err != nil {
+			log.Printf("Unable to resolve absolute path for %s: %v", outPath, err)
+			absPath = outPath
+		}
+
+		var cmd *exec.Cmd
+		switch runtime.GOOS {
+		case "windows":
+			cmd = exec.Command("cmd", "/c", "start", "", absPath)
+		case "darwin":
+			cmd = exec.Command("open", absPath)
+		default:
+			cmd = exec.Command("xdg-open", absPath)
+		}
+
+		fmt.Println("→ Opening report…")
+		if err := cmd.Start(); err != nil {
+			fmt.Println("Unable to open report:", err)
+			log.Println("open report error:", err)
+		}
+	}
+
 	if *serveFlag {
 		relPath := outPath
 		if filepath.IsAbs(relPath) {
@@ -267,5 +294,5 @@ func main() {
 }
 
 func isWindows() bool {
-	return strings.Contains(strings.ToLower(os.Getenv("OS")), "windows")
+	return runtime.GOOS == "windows"
 }
