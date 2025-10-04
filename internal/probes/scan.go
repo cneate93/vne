@@ -17,6 +17,7 @@ type L2Host struct {
 	IfName string `json:"if_name"`
 	IP     string `json:"ip"`
 	MAC    string `json:"mac"`
+	Vendor string `json:"vendor,omitempty"`
 }
 
 type scanTarget struct {
@@ -336,6 +337,10 @@ func addHost(hosts *[]L2Host, seen map[string]struct{}, candidates []*scanTarget
 	if len(candidates) == 0 {
 		return false
 	}
+	vendor := ""
+	if info, ok := VendorFromMAC(mac); ok {
+		vendor = info.Name
+	}
 	for _, cand := range candidates {
 		if cand == nil || !cand.Network.Contains(ip) {
 			continue
@@ -349,7 +354,7 @@ func addHost(hosts *[]L2Host, seen map[string]struct{}, candidates []*scanTarget
 			return true
 		}
 		seen[key] = struct{}{}
-		*hosts = append(*hosts, L2Host{IfName: cand.IfName, IP: ip.String(), MAC: mac})
+		*hosts = append(*hosts, L2Host{IfName: cand.IfName, IP: ip.String(), MAC: mac, Vendor: vendor})
 		return true
 	}
 	// no strict match; try again without interface hint requirement
@@ -362,7 +367,7 @@ func addHost(hosts *[]L2Host, seen map[string]struct{}, candidates []*scanTarget
 			return true
 		}
 		seen[key] = struct{}{}
-		*hosts = append(*hosts, L2Host{IfName: cand.IfName, IP: ip.String(), MAC: mac})
+		*hosts = append(*hosts, L2Host{IfName: cand.IfName, IP: ip.String(), MAC: mac, Vendor: vendor})
 		return true
 	}
 	return false
