@@ -58,6 +58,7 @@ func main() {
 	openFlag := flag.Bool("open", false, "Open the generated report after creation")
 	pythonFlag := flag.String("python", "", "Path to python executable for the FortiGate pack")
 	verboseFlag := flag.Bool("verbose", false, "Enable verbose logging to vne.log")
+	bundleFlag := flag.Bool("bundle", false, "Write zipped evidence bundle (vne-evidence-YYYYMMDD-HHMM.zip)")
 	flag.Parse()
 
 	if err := logx.Configure(*verboseFlag); err != nil {
@@ -250,6 +251,20 @@ func main() {
 	}
 	fmt.Println("\n✅ Done. Report written to:", outPath)
 	log.Println("Report generation complete")
+
+	if *bundleFlag {
+		bundleName := fmt.Sprintf("vne-evidence-%s.zip", res.When.Format("20060102-1504"))
+		rawFiles := map[string][]byte{
+			"gateway-ping.txt": []byte(res.GwPing.Raw),
+			"wan-ping.txt":     []byte(res.WanPing.Raw),
+			"traceroute.txt":   []byte(res.Trace.Raw),
+		}
+		if err := report.WriteBundle(bundleName, res, rawFiles); err != nil {
+			log.Fatalf("failed to write bundle: %v", err)
+		}
+		fmt.Println("→ Evidence bundle written to:", bundleName)
+		log.Println("Evidence bundle written to", bundleName)
+	}
 
 	if *openFlag {
 		absPath, err := filepath.Abs(outPath)
