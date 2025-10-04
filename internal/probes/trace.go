@@ -31,11 +31,14 @@ func Trace(target string, maxHops int, timeout time.Duration) (TraceResult, erro
 	case "windows":
 		cmd = exec.CommandContext(ctx, "tracert", "-d", "-h", strconv.Itoa(maxHops), target)
 	default:
-		if _, err := exec.LookPath("traceroute"); err == nil {
-			cmd = exec.CommandContext(ctx, "traceroute", "-n", "-m", strconv.Itoa(maxHops), target)
-		} else {
+		if traceroutePath, err := exec.LookPath("traceroute"); err == nil {
+			cmd = exec.CommandContext(ctx, traceroutePath, "-n", "-m", strconv.Itoa(maxHops), target)
+		} else if tracepathPath, tracepathErr := exec.LookPath("tracepath"); tracepathErr == nil {
 			// Fallback to tracepath if traceroute is unavailable.
-			cmd = exec.CommandContext(ctx, "tracepath", "-n", target)
+			cmd = exec.CommandContext(ctx, tracepathPath, "-n", target)
+		} else {
+			msg := "neither traceroute nor tracepath command is available on this system; unable to run traceroute"
+			return TraceResult{Raw: msg}, fmt.Errorf(msg)
 		}
 	}
 
@@ -44,19 +47,33 @@ func Trace(target string, maxHops int, timeout time.Duration) (TraceResult, erro
 		out = []byte(fmt.Sprintf("traceroute timed out after %s", timeout))
 	}
 	result := TraceResult{Raw: string(out)}
-	if err != nil && runtime.GOOS == "windows" {
+	if err != nil {
 		trimmed := strings.TrimSpace(result.Raw)
-		switch {
-		case errors.Is(err, exec.ErrNotFound):
-			result.Raw = "tracert command not found on Windows; unable to run traceroute."
-		case trimmed != "":
+		if trimmed != "" {
 			result.Raw = trimmed
-		default:
-			var exitErr *exec.ExitError
-			if errors.As(err, &exitErr) {
-				result.Raw = fmt.Sprintf("tracert exited with code %d and produced no output.", exitErr.ExitCode())
-			} else {
-				result.Raw = fmt.Sprintf("failed to run tracert: %v", err)
+		} else {
+			switch runtime.GOOS {
+			case "windows":
+				switch {
+				case errors.Is(err, exec.ErrNotFound):
+					result.Raw = "tracert command not found on Windows; unable to run traceroute."
+				default:
+					var exitErr *exec.ExitError
+					if errors.As(err, &exitErr) {
+						result.Raw = fmt.Sprintf("tracert exited with code %d and produced no output.", exitErr.ExitCode())
+					} else {
+						result.Raw = fmt.Sprintf("failed to run tracert: %v", err)
+					}
+				}
+			default:
+				var exitErr *exec.ExitError
+				if errors.As(err, &exitErr) {
+					result.Raw = fmt.Sprintf("trace command exited with code %d and produced no output.", exitErr.ExitCode())
+				} else if errors.Is(err, exec.ErrNotFound) {
+					result.Raw = "trace command not found; ensure traceroute or tracepath is installed."
+				} else {
+					result.Raw = fmt.Sprintf("failed to run trace command: %v", err)
+				}
 			}
 		}
 	}
