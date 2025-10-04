@@ -37,6 +37,8 @@ h1 {
         padding: 1.5rem;
         box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
         margin-bottom: 1.5rem;
+        border: 1px solid transparent;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .card h2 {
@@ -44,11 +46,108 @@ h1 {
         font-size: 1.4rem;
 }
 
+.card.card-focus {
+        border-color: rgba(37, 99, 235, 0.4);
+        box-shadow: 0 16px 36px rgba(37, 99, 235, 0.18);
+}
+
 .card-header {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 1rem;
+}
+
+.troubleshooter-header {
+        margin-bottom: 1rem;
+}
+
+.troubleshooter-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        margin-bottom: 1.25rem;
+}
+
+.troubleshooter-action {
+        background: rgba(37, 99, 235, 0.12);
+        color: #1d4ed8;
+        border-radius: 12px;
+        padding: 0.85rem 1rem;
+        border: 1px solid transparent;
+        flex: 1;
+        min-width: 220px;
+        text-align: left;
+        box-shadow: none;
+        transition: transform 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.troubleshooter-action:hover {
+        background: rgba(37, 99, 235, 0.18);
+        transform: translateY(-1px);
+        box-shadow: 0 10px 20px rgba(37, 99, 235, 0.12);
+}
+
+.troubleshooter-action.is-active {
+        background: #2563eb;
+        color: #fff;
+        box-shadow: 0 16px 36px rgba(37, 99, 235, 0.28);
+}
+
+.troubleshooter-action:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+}
+
+.troubleshooter-body {
+        margin-top: 1.25rem;
+        padding-top: 1.25rem;
+        border-top: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.troubleshooter-title {
+        margin: 0 0 0.5rem;
+        font-size: 1.15rem;
+}
+
+.troubleshooter-intro {
+        margin: 0 0 1rem;
+        color: #4b5563;
+        font-size: 0.98rem;
+}
+
+.troubleshooter-checklist {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 0.75rem;
+}
+
+.troubleshooter-checklist li {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.6rem;
+        padding: 0.8rem 0.95rem;
+        border-radius: 10px;
+        background: rgba(37, 99, 235, 0.08);
+        font-size: 0.95rem;
+        color: inherit;
+}
+
+.troubleshooter-checklist li::before {
+        content: "✔";
+        font-size: 0.85rem;
+        color: #2563eb;
+        margin-top: 0.15rem;
+}
+
+.troubleshooter-status {
+        margin: 1.1rem 0 0;
+        font-size: 0.96rem;
+        color: #1f2933;
 }
 
 .card-subtitle {
