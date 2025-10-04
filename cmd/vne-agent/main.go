@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"github.com/cneate93/vne/internal/logx"
 	"github.com/cneate93/vne/internal/probes"
 	"github.com/cneate93/vne/internal/report"
+	"github.com/cneate93/vne/internal/snmp"
 	"github.com/cneate93/vne/internal/sshx"
 )
 
@@ -50,7 +52,66 @@ func yesno(s string) bool {
 	}
 }
 
+type snmpQuery struct {
+	Host      string
+	Community string
+	Iface     string
+}
+
+func normalizeSNMPArgs() {
+	args := os.Args[1:]
+	var normalized []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--snmp" {
+			j := i + 1
+			var tokens []string
+			for j < len(args) && !strings.HasPrefix(args[j], "-") {
+				tokens = append(tokens, args[j])
+				j++
+			}
+			if len(tokens) > 0 {
+				normalized = append(normalized, "--snmp="+strings.Join(tokens, " "))
+				i = j - 1
+				continue
+			}
+		}
+		normalized = append(normalized, args[i])
+	}
+	os.Args = append([]string{os.Args[0]}, normalized...)
+}
+
+func parseSNMPFlag(raw string) (*snmpQuery, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	fields := strings.Fields(raw)
+	cfg := &snmpQuery{}
+	for _, field := range fields {
+		parts := strings.SplitN(field, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("expected key=value pair, got %q", field)
+		}
+		key := strings.ToLower(parts[0])
+		val := parts[1]
+		switch key {
+		case "host":
+			cfg.Host = val
+		case "community":
+			cfg.Community = val
+		case "if", "iface", "interface":
+			cfg.Iface = val
+		default:
+			return nil, fmt.Errorf("unknown parameter %q", key)
+		}
+	}
+	if cfg.Host == "" || cfg.Community == "" || cfg.Iface == "" {
+		return nil, fmt.Errorf("host, community, and if parameters are required")
+	}
+	return cfg, nil
+}
+
 func main() {
+	normalizeSNMPArgs()
 	targetFlag := flag.String("target", "", "Target for WAN checks (default 1.1.1.1)")
 	outFlag := flag.String("out", "", "Output HTML report path (default vne-report.html)")
 	skipPythonFlag := flag.Bool("skip-python", false, "Skip the optional FortiGate Python pack")
@@ -62,6 +123,7 @@ func main() {
 	jsonFlag := flag.String("json", "", "Write report data as indented JSON to the given path")
 	countFlag := flag.Int("count", 20, "Number of ping attempts for each host (default 20)")
 	timeoutFlag := flag.Duration("timeout", 10*time.Second, "Timeout for network probes (default 10s)")
+	snmpFlag := flag.String("snmp", "", "SNMP interface query parameters, e.g. \"host=1.2.3.4 community=public if=Gig0/1\"")
 	flag.Parse()
 
 	if err := logx.Configure(*verboseFlag); err != nil {
@@ -75,6 +137,12 @@ func main() {
 		flagsSet[f.Name] = true
 	})
 	nonInteractive := flagsSet["target"] || flagsSet["out"] || flagsSet["skip-python"]
+
+	snmpCfg, err := parseSNMPFlag(*snmpFlag)
+	if err != nil {
+		fmt.Println("→ Unable to parse --snmp parameters:", err)
+		log.Println("SNMP flag parse error:", err)
+	}
 
 	fmt.Println("== Virtual Network Engineer (MVP) ==")
 
@@ -101,6 +169,9 @@ func main() {
 	}
 
 	log.Printf("Using target host: %s", ctx.TargetHost)
+	if snmpCfg != nil {
+		log.Printf("SNMP query configured for host %s interface %s", snmpCfg.Host, snmpCfg.Iface)
+	}
 
 	if nonInteractive {
 		if !*skipPythonFlag {
@@ -201,6 +272,25 @@ func main() {
 		}
 	}
 
+	// 7.5) Optional SNMP interface health
+	var ifaceHealth *snmp.InterfaceHealth
+	if snmpCfg != nil {
+		fmt.Println("\n→ Fetching SNMP interface health…")
+		log.Printf("Fetching SNMP interface health from %s (%s)", snmpCfg.Host, snmpCfg.Iface)
+		snmpCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ifaceHealth, err = snmp.GetInterfaceHealth(snmpCtx, snmpCfg.Host, snmpCfg.Community, snmpCfg.Iface)
+		cancel()
+		if err != nil {
+			fmt.Println("  Unable to fetch interface health:", err)
+			log.Println("SNMP interface health error:", err)
+		} else {
+			fmt.Printf("  Interface %s status: %s\n", ifaceHealth.Name, ifaceHealth.OperStatus)
+			fmt.Printf("  Speed: %d bps\n", ifaceHealth.SpeedBps)
+			fmt.Printf("  InErrors=%d OutErrors=%d InDiscards=%d OutDiscards=%d\n",
+				ifaceHealth.InErrors, ifaceHealth.OutErrors, ifaceHealth.InDiscards, ifaceHealth.OutDiscards)
+		}
+	}
+
 	// 8) Findings / heuristics (simple)
 	var findings []report.Finding
 	if gw != "" && gwPing.Loss > 0.3 {
@@ -238,6 +328,26 @@ func main() {
 			Message:  fmt.Sprintf("%s with active VPN/tunnel adapter (%s). Recommend setting tunnel MTU to 1420–1412 and enabling a TCP MSS clamp to avoid fragmentation.", mtuPhrase, strings.Join(vpnAdapters, ", ")),
 		})
 	}
+	if ifaceHealth != nil {
+		if ifaceHealth.OperStatus != "" && strings.ToLower(ifaceHealth.OperStatus) != "up" {
+			findings = append(findings, report.Finding{
+				Severity: "high",
+				Message:  fmt.Sprintf("Interface %s reports operational status %s via SNMP.", ifaceHealth.Name, ifaceHealth.OperStatus),
+			})
+		}
+		if ifaceHealth.InErrors > 0 || ifaceHealth.OutErrors > 0 {
+			findings = append(findings, report.Finding{
+				Severity: "medium",
+				Message:  fmt.Sprintf("Interface %s shows %d input and %d output errors via SNMP.", ifaceHealth.Name, ifaceHealth.InErrors, ifaceHealth.OutErrors),
+			})
+		}
+		if ifaceHealth.InDiscards > 0 || ifaceHealth.OutDiscards > 0 {
+			findings = append(findings, report.Finding{
+				Severity: "medium",
+				Message:  fmt.Sprintf("Interface %s shows %d input and %d output discards via SNMP.", ifaceHealth.Name, ifaceHealth.InDiscards, ifaceHealth.OutDiscards),
+			})
+		}
+	}
 
 	// 9) Assemble report (pre-format loss % strings to keep template simple)
 	res := report.Results{
@@ -252,6 +362,7 @@ func main() {
 		MTU:         mtu,
 		Findings:    findings,
 		FortiRaw:    fortiRaw,
+		IfaceHealth: ifaceHealth,
 		GwLossPct:   fmt.Sprintf("%.0f%%", gwPing.Loss*100),
 		WanLossPct:  fmt.Sprintf("%.0f%%", wanPing.Loss*100),
 		TargetHost:  ctx.TargetHost,
