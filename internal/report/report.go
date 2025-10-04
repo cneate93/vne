@@ -1,17 +1,18 @@
 package report
 
 import (
-	"bytes"
+        "bytes"
+        _ "embed"
 	"fmt"
 	"html/template"
 	"os"
 	"time"
 
-	"github.com/cneate93/vne/assets"
 	"github.com/cneate93/vne/internal/probes"
 )
 
-var defaultReportTemplate = assets.ReportTemplate
+//go:embed report_template.html
+var defaultReportTemplate string
 
 type Finding struct {
 	Severity string `json:"severity"`
