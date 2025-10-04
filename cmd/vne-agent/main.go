@@ -134,6 +134,10 @@ func main() {
 	openFlag := flag.Bool("open", false, "Open the generated report after creation")
 	pythonFlag := flag.String("python", "", "Path to python executable for optional packs")
 	autoPacksFlag := flag.Bool("auto-packs", false, "Automatically run vendor-specific packs when detected")
+	scanFlag := flag.Bool("scan", false, "Enable layer-2 discovery ping sweep (experimental)")
+	scanTimeoutFlag := flag.Duration("scan-timeout", 2*time.Second, "Timeout per host for layer-2 discovery (default 2s)")
+	scanMaxHostsFlag := flag.Int("scan-max-hosts", 256, "Maximum number of layer-2 hosts to probe (default 256)")
+	scanCIDRLimitFlag := flag.Int("scan-cidr-limit", 24, "Smallest CIDR mask to sweep (default 24)")
 	fortiHostFlag := flag.String("forti-host", "", "FortiGate host/IP for optional Python pack")
 	fortiUserFlag := flag.String("forti-user", "", "FortiGate username for optional Python pack")
 	fortiPassFlag := flag.String("forti-pass", "", "FortiGate password for optional Python pack")
@@ -273,14 +277,20 @@ func main() {
 	}
 
 	// 1.5) Layer-2 discovery (ARP scan)
-	fmt.Println("→ Discovering local layer-2 neighbors (ping sweep)…")
-	log.Println("Running layer-2 discovery")
-	l2Hosts, l2Err := probes.L2Scan(3*time.Second, 256)
-	if l2Err != nil {
-		fmt.Println("  Unable to complete L2 discovery:", l2Err)
-		log.Println("L2 discovery error:", l2Err)
-	} else if len(l2Hosts) == 0 {
-		fmt.Println("  No L2 hosts discovered (ARP cache empty).")
+	var l2Hosts []probes.L2Host
+	if *scanFlag {
+		fmt.Println("→ Discovering local layer-2 neighbors (ping sweep)…")
+		log.Println("Running layer-2 discovery")
+		l2Hosts, l2Err := probes.L2Scan(*scanTimeoutFlag, *scanMaxHostsFlag, *scanCIDRLimitFlag)
+		if l2Err != nil {
+			fmt.Println("  Unable to complete L2 discovery:", l2Err)
+			log.Println("L2 discovery error:", l2Err)
+		} else if len(l2Hosts) == 0 {
+			fmt.Println("  No L2 hosts discovered (ARP cache empty).")
+		}
+	} else {
+		fmt.Println("→ Skipping local layer-2 discovery (enable with --scan).")
+		log.Println("Skipping layer-2 discovery (flag not set)")
 	}
 
 	// 2) Gateway ping

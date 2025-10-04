@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+const maxScanWorkers = 128
+
 type L2Host struct {
 	IfName string `json:"if_name"`
 	IP     string `json:"ip"`
@@ -28,15 +30,18 @@ type scanTarget struct {
 }
 
 // L2Scan performs a best-effort layer-2 discovery by ping sweeping the local
-// subnets for each active interface with a private IPv4 address (up to
-// maxHosts hosts per interface) and then parsing the system ARP cache. It
-// returns the discovered hosts in the ARP table.
-func L2Scan(timeout time.Duration, maxHosts int) ([]L2Host, error) {
+// subnets for each active interface with a private IPv4 address. The sweep is
+// bounded by the provided guardrails (timeout, host budget, and CIDR limit) and
+// then parses the system ARP cache to return discovered hosts.
+func L2Scan(timeout time.Duration, maxHosts int, cidrLimit int) ([]L2Host, error) {
 	if maxHosts <= 0 {
 		maxHosts = 256
 	}
 	if timeout <= 0 {
 		timeout = 2 * time.Second
+	}
+	if cidrLimit <= 0 || cidrLimit > 32 {
+		cidrLimit = 24
 	}
 
 	pingPath, err := exec.LookPath("ping")
@@ -53,9 +58,16 @@ func L2Scan(timeout time.Duration, maxHosts int) ([]L2Host, error) {
 		return []L2Host{}, fmt.Errorf("list interfaces: %w", err)
 	}
 
+	remaining := maxHosts
 	var targets []*scanTarget
 	for _, iface := range interfaces {
+		if remaining <= 0 {
+			break
+		}
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if isLikelyCellularInterface(iface) {
 			continue
 		}
 		addrs, err := iface.Addrs()
@@ -63,22 +75,38 @@ func L2Scan(timeout time.Duration, maxHosts int) ([]L2Host, error) {
 			continue
 		}
 		for _, addr := range addrs {
+			if remaining <= 0 {
+				break
+			}
 			ipNet, ok := addr.(*net.IPNet)
 			if !ok {
 				continue
 			}
 			ip4 := ipNet.IP.To4()
-			if ip4 == nil || !ip4.IsPrivate() {
+			if ip4 == nil || !ip4.IsPrivate() || ip4.IsLinkLocalUnicast() {
 				continue
 			}
-			sweepNet := adjustSweepNetwork(ip4, ipNet)
+			sweepNet := adjustSweepNetwork(ip4, ipNet, cidrLimit)
 			if sweepNet == nil {
 				continue
 			}
-			hosts := enumerateHosts(ip4, sweepNet, maxHosts)
+			hosts := enumerateHosts(ip4, sweepNet, remaining)
 			if len(hosts) == 0 {
 				continue
 			}
+			localStr := ip4.String()
+			filtered := hosts[:0]
+			for _, host := range hosts {
+				if host == localStr {
+					continue
+				}
+				filtered = append(filtered, host)
+			}
+			hosts = filtered
+			if len(hosts) == 0 {
+				continue
+			}
+			remaining -= len(hosts)
 			targets = append(targets, &scanTarget{
 				IfName:  iface.Name,
 				LocalIP: append(net.IP(nil), ip4...),
@@ -108,16 +136,16 @@ func L2Scan(timeout time.Duration, maxHosts int) ([]L2Host, error) {
 	}
 
 	if len(toPing) > 0 {
-		concurrency := 32
-		if len(toPing) < concurrency {
-			concurrency = len(toPing)
+		workerCount := maxScanWorkers
+		if len(toPing) < workerCount {
+			workerCount = len(toPing)
 		}
-		if concurrency < 1 {
-			concurrency = 1
+		if workerCount < 1 {
+			workerCount = 1
 		}
+		jobs := make(chan string, workerCount)
 		var wg sync.WaitGroup
-		jobs := make(chan string)
-		for i := 0; i < concurrency; i++ {
+		for i := 0; i < workerCount; i++ {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -165,7 +193,7 @@ func pingArgs(ip string, timeout time.Duration) []string {
 	return []string{"-c", "1", "-W", strconv.Itoa(sec), ip}
 }
 
-func adjustSweepNetwork(ip net.IP, ipNet *net.IPNet) *net.IPNet {
+func adjustSweepNetwork(ip net.IP, ipNet *net.IPNet, cidrLimit int) *net.IPNet {
 	if ipNet == nil {
 		return nil
 	}
@@ -174,11 +202,8 @@ func adjustSweepNetwork(ip net.IP, ipNet *net.IPNet) *net.IPNet {
 		return nil
 	}
 	target := ones
-	if target < 24 {
-		target = 24
-	}
-	if ones > 24 {
-		target = ones
+	if cidrLimit > 0 && cidrLimit <= 32 && target < cidrLimit {
+		target = cidrLimit
 	}
 	if target > 32 {
 		target = 32
@@ -186,6 +211,23 @@ func adjustSweepNetwork(ip net.IP, ipNet *net.IPNet) *net.IPNet {
 	mask := net.CIDRMask(target, 32)
 	networkIP := ip.Mask(mask)
 	return &net.IPNet{IP: networkIP, Mask: mask}
+}
+
+func isLikelyCellularInterface(iface net.Interface) bool {
+	name := strings.ToLower(iface.Name)
+	if name == "" {
+		return false
+	}
+	prefixes := []string{"wwan", "wwp", "lte", "rmnet", "mbim"}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	if strings.Contains(name, "cellular") || strings.Contains(name, "mobile") {
+		return true
+	}
+	return false
 }
 
 func enumerateHosts(localIP net.IP, network *net.IPNet, limit int) []string {
