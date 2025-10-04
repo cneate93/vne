@@ -44,6 +44,13 @@ h1 {
         font-size: 1.4rem;
 }
 
+.card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+}
+
 .card-subtitle {
         margin: 0.3rem 0 1.1rem;
         color: #52606d;
@@ -154,6 +161,15 @@ button:hover {
         background-color: #1d4ed8;
 }
 
+.button-secondary {
+        background-color: rgba(37, 99, 235, 0.12);
+        color: #2563eb;
+}
+
+.button-secondary:hover {
+        background-color: rgba(37, 99, 235, 0.18);
+}
+
 .status-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -221,6 +237,74 @@ button:hover {
 .console-empty {
         color: #94a3b8;
         font-style: italic;
+}
+
+.list {
+        margin: 0;
+        padding-left: 1.25rem;
+        color: inherit;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+}
+
+.list li {
+        line-height: 1.4;
+}
+
+.modal {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+}
+
+.modal[hidden] {
+        display: none !important;
+}
+
+.modal-backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.6);
+}
+
+.modal-content {
+        position: relative;
+        background: #fff;
+        color: #1f2933;
+        padding: 2rem;
+        border-radius: 16px;
+        box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+        width: min(480px, 90vw);
+        max-height: 90vh;
+        overflow-y: auto;
+        z-index: 1;
+}
+
+.modal-text {
+        margin-top: 0;
+        color: #52606d;
+}
+
+.modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 0.75rem;
+        margin-top: 1.5rem;
+}
+
+.vendor-block {
+        margin-top: 1.5rem;
+        padding-top: 1rem;
+        border-top: 1px solid #e2e8f0;
+}
+
+.vendor-block h3 {
+        margin: 0 0 0.75rem;
+        font-size: 1.1rem;
 }
 
 .results {

@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/cneate93/vne/internal/progress"
 	"github.com/cneate93/vne/internal/report"
+	"github.com/cneate93/vne/internal/sshx"
 )
 
 //go:embed index.html static/*
@@ -38,12 +41,13 @@ type Server struct {
 }
 
 type runState struct {
-	phase   string
-	percent float64
-	message string
-	running bool
-	results *report.Results
-	log     []streamEvent
+	phase        string
+	percent      float64
+	message      string
+	running      bool
+	results      *report.Results
+	log          []streamEvent
+	baseFindings []report.Finding
 }
 
 type streamEvent struct {
@@ -52,6 +56,38 @@ type streamEvent struct {
 }
 
 const maxStreamLog = 500
+
+type vendorCreds struct {
+	FortiHost   string `json:"forti_host"`
+	FortiUser   string `json:"forti_user"`
+	FortiPass   string `json:"forti_pass"`
+	CiscoHost   string `json:"cisco_host"`
+	CiscoUser   string `json:"cisco_user"`
+	CiscoPass   string `json:"cisco_pass"`
+	CiscoSecret string `json:"cisco_secret"`
+	CiscoPort   int    `json:"cisco_port"`
+}
+
+func (c *vendorCreds) normalize() {
+	if c == nil {
+		return
+	}
+	c.FortiHost = strings.TrimSpace(c.FortiHost)
+	c.FortiUser = strings.TrimSpace(c.FortiUser)
+	c.FortiPass = strings.TrimSpace(c.FortiPass)
+	c.CiscoHost = strings.TrimSpace(c.CiscoHost)
+	c.CiscoUser = strings.TrimSpace(c.CiscoUser)
+	c.CiscoPass = strings.TrimSpace(c.CiscoPass)
+	c.CiscoSecret = strings.TrimSpace(c.CiscoSecret)
+}
+
+func (c vendorCreds) hasForti() bool {
+	return c.FortiHost != "" && c.FortiUser != "" && c.FortiPass != ""
+}
+
+func (c vendorCreds) hasCisco() bool {
+	return c.CiscoHost != "" && c.CiscoUser != "" && c.CiscoPass != ""
+}
 
 var phasePercents = map[string]float64{
 	"idle":         0,
@@ -91,6 +127,7 @@ func NewServer(runner RunFunc) (*Server, error) {
 	mux.HandleFunc("/api/start", srv.handleStart)
 	mux.HandleFunc("/api/status", srv.handleStatus)
 	mux.HandleFunc("/api/results", srv.handleResults)
+	mux.HandleFunc("/api/vendor", srv.handleVendor)
 	mux.HandleFunc("/api/stream", srv.handleStream)
 	srv.mux = mux
 	srv.recordPhase("idle", "Ready", false)
@@ -187,6 +224,60 @@ func (s *Server) handleResults(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(res)
 }
 
+func (s *Server) handleVendor(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var creds vendorCreds
+	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
+		http.Error(w, "invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+	creds.normalize()
+
+	s.mu.Lock()
+	if s.state.running {
+		s.mu.Unlock()
+		http.Error(w, "run already in progress", http.StatusConflict)
+		return
+	}
+	if s.state.results == nil {
+		s.mu.Unlock()
+		http.Error(w, "no completed run available", http.StatusBadRequest)
+		return
+	}
+	suggestions := append([]string(nil), s.state.results.VendorSuggestions...)
+	if len(suggestions) == 0 {
+		s.mu.Unlock()
+		http.Error(w, "no vendor packs suggested", http.StatusBadRequest)
+		return
+	}
+	runForti := containsString(suggestions, "fortigate") && creds.hasForti()
+	runCisco := containsString(suggestions, "cisco_ios") && creds.hasCisco()
+	if !runForti && !runCisco {
+		s.mu.Unlock()
+		http.Error(w, "no vendor credentials provided", http.StatusBadRequest)
+		return
+	}
+	s.state.running = true
+	s.state.phase = "python-packs"
+	if pct, ok := phasePercents["python-packs"]; ok {
+		s.state.percent = pct
+	}
+	s.state.message = "Running vendor checks…"
+	s.mu.Unlock()
+
+	s.recordPhase("python-packs", "Running vendor checks…", false)
+	s.recordStep("Running vendor checks…")
+
+	go s.executeVendor(creds, suggestions)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]string{"status": "vendor-running"})
+}
+
 func (s *Server) execute(req RunRequest) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -212,10 +303,149 @@ func (s *Server) execute(req RunRequest) {
 	s.state.message = "Diagnostics complete"
 	s.state.running = false
 	s.state.results = &resCopy
+	s.state.baseFindings = append([]report.Finding(nil), resCopy.Findings...)
 	s.mu.Unlock()
 	s.recordPhase("finished", "Diagnostics complete", false)
 	s.recordStep("Diagnostics complete.")
 	s.recordDone("finished", "Diagnostics complete")
+}
+
+func (s *Server) executeVendor(creds vendorCreds, suggestions []string) {
+	pythonPath := defaultPythonPath()
+	shouldRunForti := containsString(suggestions, "fortigate") && creds.hasForti()
+	shouldRunCisco := containsString(suggestions, "cisco_ios") && creds.hasCisco()
+
+	var fortiRaw map[string]any
+	var ciscoRaw *report.CiscoPackResults
+	var vendorSummaries []report.Finding
+	var vendorFindings []report.Finding
+
+	if shouldRunForti {
+		s.recordStep("→ Running FortiGate vendor pack…")
+		payload := map[string]any{
+			"host":     creds.FortiHost,
+			"username": creds.FortiUser,
+			"password": creds.FortiPass,
+			"commands": map[string]string{
+				"interfaces": "get hardware nic",
+				"routes":     "get router info routing-table all",
+			},
+		}
+		parserPath := filepath.Join("packs", "python", "fortigate", "parser.py")
+		out, err := sshx.RunPythonPack(pythonPath, parserPath, payload)
+		if err != nil {
+			msg := fmt.Sprintf("FortiGate vendor pack error: %v", err)
+			s.recordStep(msg)
+			vendorSummaries = append(vendorSummaries, report.Finding{Severity: "info", Message: msg})
+		} else {
+			var parsed map[string]any
+			if err := json.Unmarshal(out, &parsed); err != nil {
+				msg := fmt.Sprintf("FortiGate vendor pack parse error: %v", err)
+				s.recordStep(msg)
+				vendorSummaries = append(vendorSummaries, report.Finding{Severity: "info", Message: msg})
+			} else {
+				fortiRaw = parsed
+				vendorSummaries = append(vendorSummaries, report.Finding{Severity: "info", Message: "FortiGate vendor pack completed."})
+			}
+		}
+	}
+
+	if shouldRunCisco {
+		s.recordStep("→ Running Cisco IOS vendor pack…")
+		payload := map[string]any{
+			"host":     creds.CiscoHost,
+			"username": creds.CiscoUser,
+			"password": creds.CiscoPass,
+		}
+		if creds.CiscoSecret != "" {
+			payload["secret"] = creds.CiscoSecret
+		}
+		if creds.CiscoPort != 0 && creds.CiscoPort != 22 {
+			payload["port"] = creds.CiscoPort
+		}
+		parserPath := filepath.Join("packs", "python", "cisco_ios", "parser.py")
+		out, err := sshx.RunPythonPack(pythonPath, parserPath, payload)
+		if err != nil {
+			msg := fmt.Sprintf("Cisco IOS vendor pack error: %v", err)
+			s.recordStep(msg)
+			vendorSummaries = append(vendorSummaries, report.Finding{Severity: "info", Message: msg})
+		} else {
+			var parsed report.CiscoPackResults
+			if err := json.Unmarshal(out, &parsed); err != nil {
+				msg := fmt.Sprintf("Cisco IOS vendor pack parse error: %v", err)
+				s.recordStep(msg)
+				vendorSummaries = append(vendorSummaries, report.Finding{Severity: "info", Message: msg})
+			} else {
+				ciscoRaw = &parsed
+				vendorSummaries = append(vendorSummaries, report.Finding{
+					Severity: "info",
+					Message:  fmt.Sprintf("Cisco IOS vendor pack completed with %d finding(s).", len(parsed.Findings)),
+				})
+				if len(parsed.Findings) > 0 {
+					vendorFindings = append(vendorFindings, parsed.Findings...)
+				}
+			}
+		}
+	}
+
+	s.mu.Lock()
+	if s.state.results != nil {
+		resCopy := *s.state.results
+		if fortiRaw != nil {
+			resCopy.FortiRaw = fortiRaw
+		}
+		if shouldRunForti && fortiRaw == nil {
+			resCopy.FortiRaw = nil
+		}
+		if ciscoRaw != nil {
+			resCopy.CiscoIOS = ciscoRaw
+		}
+		if shouldRunCisco && ciscoRaw == nil {
+			resCopy.CiscoIOS = nil
+		}
+		if len(vendorSummaries) > 0 {
+			resCopy.VendorSummaries = append([]report.Finding(nil), vendorSummaries...)
+		} else {
+			resCopy.VendorSummaries = nil
+		}
+		if len(vendorFindings) > 0 {
+			resCopy.VendorFindings = append([]report.Finding(nil), vendorFindings...)
+		} else {
+			resCopy.VendorFindings = nil
+		}
+		baseFindings := append([]report.Finding(nil), s.state.baseFindings...)
+		if len(baseFindings) > 0 || len(vendorFindings) > 0 {
+			resCopy.Findings = append(baseFindings, vendorFindings...)
+		} else {
+			resCopy.Findings = nil
+		}
+		s.state.results = &resCopy
+	}
+	s.state.running = false
+	s.state.phase = "finished"
+	s.state.percent = 100
+	s.state.message = "Vendor checks complete"
+	s.mu.Unlock()
+
+	s.recordPhase("finished", "Vendor checks complete", false)
+	s.recordStep("Vendor checks complete.")
+	s.recordDone("finished", "Vendor checks complete")
+}
+
+func containsString(list []string, target string) bool {
+	for _, v := range list {
+		if v == target {
+			return true
+		}
+	}
+	return false
+}
+
+func defaultPythonPath() string {
+	if runtime.GOOS == "windows" {
+		return "python"
+	}
+	return "python3"
 }
 
 type Status struct {

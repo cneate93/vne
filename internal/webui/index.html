@@ -102,6 +102,16 @@
                         </div>
                 </section>
 
+                <section class="card" id="vendor-card" hidden>
+                        <div class="card-header">
+                                <h2>Vendor Checks</h2>
+                                <button type="button" id="vendor-open" class="button-secondary" hidden>Provide credentials</button>
+                        </div>
+                        <p id="vendor-message" class="card-subtitle"></p>
+                        <ul id="vendor-summary" class="list" hidden></ul>
+                        <ul id="vendor-findings" class="list" hidden></ul>
+                </section>
+
                 <section class="card">
                         <h2>Console</h2>
                         <div id="console" class="console" aria-live="polite" aria-atomic="false">
@@ -114,6 +124,58 @@
                         <pre id="results" class="results">(No results yet)</pre>
                 </section>
         </main>
+        <div id="vendor-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="vendor-modal-title" hidden>
+                <div class="modal-backdrop" data-action="close"></div>
+                <div class="modal-content">
+                        <h2 id="vendor-modal-title">Vendor checks</h2>
+                        <p id="vendor-modal-text" class="modal-text">Detected Fortinet/Cisco devices. Provide credentials to run vendor checks.</p>
+                        <form id="vendor-form">
+                                <div id="vendor-forti" class="vendor-block" hidden>
+                                        <h3>Fortinet</h3>
+                                        <label class="field">
+                                                <span>Host/IP</span>
+                                                <input type="text" id="forti-host" autocomplete="off">
+                                        </label>
+                                        <label class="field">
+                                                <span>Username</span>
+                                                <input type="text" id="forti-user" autocomplete="off">
+                                        </label>
+                                        <label class="field">
+                                                <span>Password</span>
+                                                <input type="password" id="forti-pass" autocomplete="off">
+                                        </label>
+                                </div>
+                                <div id="vendor-cisco" class="vendor-block" hidden>
+                                        <h3>Cisco IOS</h3>
+                                        <label class="field">
+                                                <span>Host/IP</span>
+                                                <input type="text" id="cisco-host" autocomplete="off">
+                                        </label>
+                                        <label class="field">
+                                                <span>Username</span>
+                                                <input type="text" id="cisco-user" autocomplete="off">
+                                        </label>
+                                        <label class="field">
+                                                <span>Password</span>
+                                                <input type="password" id="cisco-pass" autocomplete="off">
+                                        </label>
+                                        <label class="field">
+                                                <span>Enable secret (optional)</span>
+                                                <input type="password" id="cisco-secret" autocomplete="off">
+                                        </label>
+                                        <label class="field">
+                                                <span>SSH port (optional)</span>
+                                                <input type="number" id="cisco-port" min="1" max="65535" autocomplete="off">
+                                        </label>
+                                </div>
+                                <p id="vendor-error" class="error" role="alert" hidden></p>
+                                <div class="modal-actions">
+                                        <button type="button" id="vendor-cancel" class="button-secondary">Cancel</button>
+                                        <button type="submit">Run vendor checks</button>
+                                </div>
+                        </form>
+                </div>
+        </div>
         <script src="/static/app.js" defer></script>
 </body>
 </html>

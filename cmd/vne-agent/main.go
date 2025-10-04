@@ -183,7 +183,7 @@ func main() {
 				ScanMaxHosts:  *scanMaxHostsFlag,
 				ScanCIDRLimit: *scanCIDRLimitFlag,
 				SkipPython:    true,
-				AutoPacks:     false,
+				AutoPacks:     true,
 				SNMPCfg:       nil,
 				Printer:       newProgressPrinter(reporter),
 				Progress:      reporter,
