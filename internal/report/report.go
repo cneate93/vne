@@ -20,6 +20,21 @@ type Finding struct {
 	Message  string `json:"message"`
 }
 
+type CiscoInterface struct {
+	Iface        string `json:"iface"`
+	Duplex       string `json:"duplex"`
+	Speed        string `json:"speed"`
+	CRC          int    `json:"crc"`
+	InputErrors  int    `json:"input_errs"`
+	OutputErrors int    `json:"output_errs"`
+}
+
+type CiscoPackResults struct {
+	Interfaces []CiscoInterface `json:"interfaces"`
+	Findings   []Finding        `json:"findings"`
+	Raw        string           `json:"raw"`
+}
+
 type Results struct {
 	When        time.Time             `json:"when"`
 	UserNote    string                `json:"user_note"`
@@ -32,6 +47,7 @@ type Results struct {
 	MTU         probes.MTUResult      `json:"mtu"`
 	Findings    []Finding             `json:"findings"`
 	FortiRaw    any                   `json:"forti_raw,omitempty"`
+	CiscoIOS    *CiscoPackResults     `json:"cisco_ios,omitempty"`
 	IfaceHealth *snmp.InterfaceHealth `json:"iface_health,omitempty"`
 	GwLossPct   string                `json:"gw_loss_pct"`
 	WanLossPct  string                `json:"wan_loss_pct"`

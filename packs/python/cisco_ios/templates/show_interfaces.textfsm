@@ -1,0 +1,17 @@
+Value Required INTERFACE (\S+)
+Value DUPLEX (\S+)
+Value SPEED (\S+)
+Value INPUT_ERRS (\d+)
+Value CRC (\d+)
+Value OUTPUT_ERRS (\d+)
+
+Start
+  ^${INTERFACE}\s+is\s+\S+.*, line protocol is \S+ -> Interface
+  ^\s*$ -> Start
+
+Interface
+  ^\s+${DUPLEX}\s+[dD]uplex,\s+${SPEED},.* -> Interface
+  ^\s+${INPUT_ERRS}\s+input errors,\s+${CRC}\s+CRC,.* -> Interface
+  ^\s+${OUTPUT_ERRS}\s+output errors,.* -> Record Start
+  ^\S.* -> Interface
+  ^\s*$ -> Start
