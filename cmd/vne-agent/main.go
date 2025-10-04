@@ -18,11 +18,8 @@ import (
 	"time"
 
 	"github.com/cneate93/vne/internal/logx"
-	"github.com/cneate93/vne/internal/packs"
-	"github.com/cneate93/vne/internal/probes"
 	"github.com/cneate93/vne/internal/report"
-	"github.com/cneate93/vne/internal/snmp"
-	"github.com/cneate93/vne/internal/sshx"
+	"github.com/cneate93/vne/internal/webui"
 )
 
 type RunContext struct {
@@ -131,6 +128,7 @@ func main() {
 	outFlag := flag.String("out", "", "Output HTML report path (default vne-report.html)")
 	skipPythonFlag := flag.Bool("skip-python", false, "Skip optional Python packs (FortiGate, Cisco IOS)")
 	serveFlag := flag.Bool("serve", false, "Serve the generated report over HTTP on :8080")
+	webFlag := flag.Bool("web", false, "Run embedded web UI on 127.0.0.1:8080")
 	openFlag := flag.Bool("open", false, "Open the generated report after creation")
 	pythonFlag := flag.String("python", "", "Path to python executable for optional packs")
 	autoPacksFlag := flag.Bool("auto-packs", false, "Automatically run vendor-specific packs when detected")
@@ -166,6 +164,41 @@ func main() {
 	})
 	nonInteractive := flagsSet["target"] || flagsSet["out"] || flagsSet["skip-python"]
 	autoPacksRequested := *autoPacksFlag
+
+	if *webFlag {
+		srv, err := webui.NewServer(func(_ context.Context, req webui.RunRequest) (report.Results, error) {
+			runCtx := RunContext{
+				TargetHost: "1.1.1.1",
+				CiscoPort:  22,
+			}
+			if trimmed := strings.TrimSpace(req.Target); trimmed != "" {
+				runCtx.TargetHost = trimmed
+			}
+			opts := RunOptions{
+				Count:         *countFlag,
+				Timeout:       *timeoutFlag,
+				Scan:          req.Scan,
+				ScanTimeout:   *scanTimeoutFlag,
+				ScanMaxHosts:  *scanMaxHostsFlag,
+				ScanCIDRLimit: *scanCIDRLimitFlag,
+				SkipPython:    true,
+				AutoPacks:     false,
+				SNMPCfg:       nil,
+				Printer:       nopPrinter{},
+			}
+			return runDiagnostics(runCtx, opts)
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
+		addr := "127.0.0.1:8080"
+		fmt.Printf("Starting web UI at http://%s\n", addr)
+		log.Println("Starting web UI server on", addr)
+		if err := http.ListenAndServe(addr, srv); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 
 	snmpCfg, err := parseSNMPFlag(*snmpFlag)
 	if err != nil {
@@ -262,258 +295,20 @@ func main() {
 		outPath = *outFlag
 	}
 
-	// 1) Local network info
-	fmt.Println("\n→ Collecting local network info…")
-	log.Println("Collecting local network info")
-	netInfo, err := probes.GetBasics()
+	res, err := runDiagnostics(ctx, RunOptions{
+		Count:         *countFlag,
+		Timeout:       *timeoutFlag,
+		Scan:          *scanFlag,
+		ScanTimeout:   *scanTimeoutFlag,
+		ScanMaxHosts:  *scanMaxHostsFlag,
+		ScanCIDRLimit: *scanCIDRLimitFlag,
+		SkipPython:    *skipPythonFlag,
+		AutoPacks:     autoPacksRequested,
+		SNMPCfg:       snmpCfg,
+		Printer:       stdPrinter{},
+	})
 	if err != nil {
-		log.Println("netinfo error:", err)
-	}
-
-	// Determine gateway & DNS we’ll use
-	gw := netInfo.DefaultGateway
-	if gw == "" && len(netInfo.Gateways) > 0 {
-		gw = netInfo.Gateways[0]
-	}
-
-	// 1.5) Layer-2 discovery (ARP scan)
-	var l2Hosts []probes.L2Host
-	if *scanFlag {
-		fmt.Println("→ Discovering local layer-2 neighbors (ping sweep)…")
-		log.Println("Running layer-2 discovery")
-		l2Hosts, l2Err := probes.L2Scan(*scanTimeoutFlag, *scanMaxHostsFlag, *scanCIDRLimitFlag)
-		if l2Err != nil {
-			fmt.Println("  Unable to complete L2 discovery:", l2Err)
-			log.Println("L2 discovery error:", l2Err)
-		} else if len(l2Hosts) == 0 {
-			fmt.Println("  No L2 hosts discovered (ARP cache empty).")
-		}
-	} else {
-		fmt.Println("→ Skipping local layer-2 discovery (enable with --scan).")
-		log.Println("Skipping layer-2 discovery (flag not set)")
-	}
-
-	// 2) Gateway ping
-	var gwPing probes.PingResult
-	if gw != "" {
-		fmt.Println("→ Pinging default gateway:", gw)
-		log.Println("Pinging default gateway", gw)
-		gwPing, _ = probes.PingHost(gw, *countFlag, *timeoutFlag)
-	} else {
-		fmt.Println("→ No default gateway detected; skipping gateway ping.")
-		log.Println("No default gateway detected; skipping gateway ping")
-	}
-
-	// 3) DNS lookups
-	fmt.Println("→ Testing DNS lookups…")
-	log.Println("Testing DNS lookups")
-	dnsLocal, _ := probes.DNSLookupTimed("cloudflare.com", netInfo.DNSServers, *timeoutFlag)
-	dnsCF, _ := probes.DNSLookupTimed("cloudflare.com", []string{"1.1.1.1"}, *timeoutFlag)
-
-	// 4) WAN ping/jitter
-	fmt.Println("→ Pinging internet target:", ctx.TargetHost)
-	log.Println("Pinging internet target", ctx.TargetHost)
-	wanPing, _ := probes.PingHost(ctx.TargetHost, *countFlag, *timeoutFlag)
-
-	// 5) Trace
-	fmt.Println("→ Traceroute (this may take ~10–20 seconds)…")
-	log.Println("Running traceroute")
-	traceOut, _ := probes.Trace(ctx.TargetHost, 20, *timeoutFlag)
-
-	// 6) MTU probe
-	fmt.Println("→ MTU / Path MTU probe…")
-	log.Println("Running MTU / Path MTU probe")
-	mtu, _ := probes.MTUCheck(ctx.TargetHost)
-
-	var autoPackFindings []report.Finding
-	if autoPacksRequested && !*skipPythonFlag {
-		selected := packs.PacksFor(l2Hosts)
-		if len(selected) > 0 {
-			log.Printf("Auto-selected vendor packs: %v", selected)
-		}
-		for _, key := range selected {
-			switch key {
-			case "fortigate":
-				if ctx.FortiHost != "" && ctx.FortiUser != "" && ctx.FortiPass != "" {
-					ctx.UsePythonFortigate = true
-				} else {
-					autoPackFindings = append(autoPackFindings, report.Finding{
-						Severity: "info",
-						Message:  "Detected Fortinet device(s): supply --forti-host, --forti-user, and --forti-pass to run vendor pack.",
-					})
-					log.Println("Detected Fortinet device(s) but missing FortiGate credentials; skipping auto pack run.")
-				}
-			case "cisco_ios":
-				if ctx.CiscoHost != "" && ctx.CiscoUser != "" && ctx.CiscoPass != "" {
-					ctx.UsePythonCisco = true
-				} else {
-					autoPackFindings = append(autoPackFindings, report.Finding{
-						Severity: "info",
-						Message:  "Detected Cisco device(s): supply --cisco-host, --cisco-user, and --cisco-pass to run vendor pack.",
-					})
-					log.Println("Detected Cisco device(s) but missing Cisco IOS credentials; skipping auto pack run.")
-				}
-			}
-		}
-		if (ctx.UsePythonFortigate || ctx.UsePythonCisco) && ctx.PythonPath == "" {
-			ctx.PythonPath = defaultPythonPath()
-		}
-	}
-
-	// 7) Optional FortiGate Python pack
-	var fortiRaw map[string]any
-	var ciscoRaw *report.CiscoPackResults
-	if ctx.UsePythonFortigate {
-		fmt.Println("→ Running FortiGate Python pack…")
-		log.Println("Running FortiGate Python pack")
-		packDir := filepath.Join("packs", "python", "fortigate")
-		payload := map[string]any{
-			"host":     ctx.FortiHost,
-			"username": ctx.FortiUser,
-			"password": ctx.FortiPass,
-			"commands": map[string]string{
-				"interfaces": "get hardware nic",
-				"routes":     "get router info routing-table all",
-			},
-		}
-		out, err := sshx.RunPythonPack(ctx.PythonPath, filepath.Join(packDir, "parser.py"), payload)
-		if err != nil {
-			log.Println("Forti pack error:", err)
-		} else {
-			_ = json.Unmarshal(out, &fortiRaw)
-		}
-	}
-
-	if ctx.UsePythonCisco {
-		fmt.Println("→ Running Cisco IOS Python pack…")
-		log.Println("Running Cisco IOS Python pack")
-		packDir := filepath.Join("packs", "python", "cisco_ios")
-		payload := map[string]any{
-			"host":     ctx.CiscoHost,
-			"username": ctx.CiscoUser,
-			"password": ctx.CiscoPass,
-		}
-		if ctx.CiscoSecret != "" {
-			payload["secret"] = ctx.CiscoSecret
-		}
-		if ctx.CiscoPort != 0 && ctx.CiscoPort != 22 {
-			payload["port"] = ctx.CiscoPort
-		}
-		out, err := sshx.RunPythonPack(ctx.PythonPath, filepath.Join(packDir, "parser.py"), payload)
-		if err != nil {
-			log.Println("Cisco IOS pack error:", err)
-		} else {
-			var parsed report.CiscoPackResults
-			if err := json.Unmarshal(out, &parsed); err != nil {
-				log.Println("Cisco IOS pack parse error:", err)
-			} else {
-				ciscoRaw = &parsed
-			}
-		}
-	}
-
-	// 7.5) Optional SNMP interface health
-	var ifaceHealth *snmp.InterfaceHealth
-	if snmpCfg != nil {
-		fmt.Println("\n→ Fetching SNMP interface health…")
-		log.Printf("Fetching SNMP interface health from %s (%s)", snmpCfg.Host, snmpCfg.Iface)
-		snmpCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		ifaceHealth, err = snmp.GetInterfaceHealth(snmpCtx, snmpCfg.Host, snmpCfg.Community, snmpCfg.Iface)
-		cancel()
-		if err != nil {
-			fmt.Println("  Unable to fetch interface health:", err)
-			log.Println("SNMP interface health error:", err)
-		} else {
-			fmt.Printf("  Interface %s status: %s\n", ifaceHealth.Name, ifaceHealth.OperStatus)
-			fmt.Printf("  Speed: %d bps\n", ifaceHealth.SpeedBps)
-			fmt.Printf("  InErrors=%d OutErrors=%d InDiscards=%d OutDiscards=%d\n",
-				ifaceHealth.InErrors, ifaceHealth.OutErrors, ifaceHealth.InDiscards, ifaceHealth.OutDiscards)
-		}
-	}
-
-	// 8) Findings / heuristics (simple)
-	var findings []report.Finding
-	findings = append(findings, autoPackFindings...)
-	if gw != "" && gwPing.Loss > 0.3 {
-		findings = append(findings, report.Finding{
-			Severity: "high",
-			Message:  fmt.Sprintf("High loss to default gateway (%.0f%%). Suspect local wiring/switch port; check cable/port; look for error counters.", gwPing.Loss*100),
-		})
-	}
-	if dnsLocal.AvgMs > 100 && dnsCF.AvgMs > 0 && dnsCF.AvgMs < 50 {
-		findings = append(findings, report.Finding{
-			Severity: "medium",
-			Message:  fmt.Sprintf("Local DNS slow (~%.0f ms). Consider using a public resolver (1.1.1.1) or fixing router DNS forwarder.", dnsLocal.AvgMs),
-		})
-	}
-	if wanPing.Loss > 0.05 {
-		findings = append(findings, report.Finding{
-			Severity: "medium",
-			Message:  fmt.Sprintf("Packet loss to internet target (~%.0f%%). Likely ISP/modem or upstream congestion.", wanPing.Loss*100),
-		})
-	}
-	if mtu.PathMTU > 0 && mtu.PathMTU < 1500 {
-		findings = append(findings, report.Finding{
-			Severity: "info",
-			Message:  fmt.Sprintf("Path MTU appears to be %d. If VPN/tunnel is in path, lower MTU or enable TCP MSS clamping.", mtu.PathMTU),
-		})
-	}
-	vpnAdapters := netInfo.VPNAdapterNames()
-	if len(vpnAdapters) > 0 && (mtu.PathMTU == 0 || mtu.PathMTU < 1500) {
-		mtuPhrase := "Path MTU probe was inconclusive"
-		if mtu.PathMTU > 0 {
-			mtuPhrase = fmt.Sprintf("Path MTU reported as %d", mtu.PathMTU)
-		}
-		findings = append(findings, report.Finding{
-			Severity: "info",
-			Message:  fmt.Sprintf("%s with active VPN/tunnel adapter (%s). Recommend setting tunnel MTU to 1420–1412 and enabling a TCP MSS clamp to avoid fragmentation.", mtuPhrase, strings.Join(vpnAdapters, ", ")),
-		})
-	}
-	if ifaceHealth != nil {
-		if ifaceHealth.OperStatus != "" && strings.ToLower(ifaceHealth.OperStatus) != "up" {
-			findings = append(findings, report.Finding{
-				Severity: "high",
-				Message:  fmt.Sprintf("Interface %s reports operational status %s via SNMP.", ifaceHealth.Name, ifaceHealth.OperStatus),
-			})
-		}
-		if ifaceHealth.InErrors > 0 || ifaceHealth.OutErrors > 0 {
-			findings = append(findings, report.Finding{
-				Severity: "medium",
-				Message:  fmt.Sprintf("Interface %s shows %d input and %d output errors via SNMP.", ifaceHealth.Name, ifaceHealth.InErrors, ifaceHealth.OutErrors),
-			})
-		}
-		if ifaceHealth.InDiscards > 0 || ifaceHealth.OutDiscards > 0 {
-			findings = append(findings, report.Finding{
-				Severity: "medium",
-				Message:  fmt.Sprintf("Interface %s shows %d input and %d output discards via SNMP.", ifaceHealth.Name, ifaceHealth.InDiscards, ifaceHealth.OutDiscards),
-			})
-		}
-	}
-	if ciscoRaw != nil {
-		findings = append(findings, ciscoRaw.Findings...)
-	}
-
-	// 9) Assemble report (pre-format loss % strings to keep template simple)
-	res := report.Results{
-		When:        time.Now(),
-		UserNote:    ctx.UserNotes,
-		NetInfo:     netInfo,
-		Discovered:  l2Hosts,
-		GwPing:      gwPing,
-		WanPing:     wanPing,
-		DNSLocal:    dnsLocal,
-		DNSCF:       dnsCF,
-		Trace:       traceOut,
-		MTU:         mtu,
-		Findings:    findings,
-		FortiRaw:    fortiRaw,
-		CiscoIOS:    ciscoRaw,
-		IfaceHealth: ifaceHealth,
-		GwLossPct:   fmt.Sprintf("%.0f%%", gwPing.Loss*100),
-		WanLossPct:  fmt.Sprintf("%.0f%%", wanPing.Loss*100),
-		TargetHost:  ctx.TargetHost,
-		HasGateway:  gw != "",
-		GatewayUsed: gw,
+		log.Fatal(err)
 	}
 
 	log.Println("Rendering HTML report to", outPath)
