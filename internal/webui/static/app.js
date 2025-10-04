@@ -21,6 +21,26 @@
         const wanJitter = document.getElementById('wan-jitter');
         const devicesCard = document.getElementById('devices-card');
         const devicesBody = document.getElementById('devices-body');
+        const vendorCard = document.getElementById('vendor-card');
+        const vendorMessage = document.getElementById('vendor-message');
+        const vendorSummaryList = document.getElementById('vendor-summary');
+        const vendorFindingsList = document.getElementById('vendor-findings');
+        const vendorOpenBtn = document.getElementById('vendor-open');
+        const vendorModal = document.getElementById('vendor-modal');
+        const vendorModalText = document.getElementById('vendor-modal-text');
+        const vendorForm = document.getElementById('vendor-form');
+        const vendorError = document.getElementById('vendor-error');
+        const vendorCancel = document.getElementById('vendor-cancel');
+        const vendorFortiSection = document.getElementById('vendor-forti');
+        const vendorCiscoSection = document.getElementById('vendor-cisco');
+        const fortiHostInput = document.getElementById('forti-host');
+        const fortiUserInput = document.getElementById('forti-user');
+        const fortiPassInput = document.getElementById('forti-pass');
+        const ciscoHostInput = document.getElementById('cisco-host');
+        const ciscoUserInput = document.getElementById('cisco-user');
+        const ciscoPassInput = document.getElementById('cisco-pass');
+        const ciscoSecretInput = document.getElementById('cisco-secret');
+        const ciscoPortInput = document.getElementById('cisco-port');
 
         const PHASE_LABELS = {
                 idle: 'Idle',
@@ -40,6 +60,8 @@
         };
 
         let eventSource = null;
+        let lastVendorSuggestions = [];
+        let vendorPromptShown = false;
 
         function ensureStream() {
                 if (eventSource) {
@@ -78,22 +100,26 @@
                                 resultsEl.textContent = '(Results not available yet)';
                                 populatePerformanceCards(null);
                                 populateDevicesTable(null);
+                                populateVendorCard(null);
                                 return;
                         }
                         if (!resp.ok) {
                                 resultsEl.textContent = '(Results not available yet)';
                                 populateDevicesTable(null);
+                                populateVendorCard(null);
                                 return;
                         }
                         const data = await resp.json();
                         resultsEl.textContent = JSON.stringify(data, null, 2);
                         populatePerformanceCards(data);
                         populateDevicesTable(data && Array.isArray(data.discovered) ? data.discovered : null);
+                        populateVendorCard(data);
                 } catch (err) {
                         console.error(err);
                         resultsEl.textContent = '(Unable to load results)';
                         populatePerformanceCards(null);
                         populateDevicesTable(null);
+                        populateVendorCard(null);
                 }
         }
 
@@ -192,6 +218,7 @@
                 }
                 if (data.reset) {
                         clearConsole();
+                        resetVendorState();
                 }
                 if (data.name) {
                         applyPhase(data.name);
@@ -325,6 +352,197 @@
                 devicesCard.hidden = false;
         }
 
+        function populateVendorCard(data) {
+                if (!vendorCard || !vendorMessage) {
+                        return;
+                }
+                const suggestions = Array.isArray(data && data.vendor_suggestions) ? data.vendor_suggestions : [];
+                const summaries = Array.isArray(data && data.vendor_summaries) ? data.vendor_summaries : [];
+                const findings = Array.isArray(data && data.vendor_findings) ? data.vendor_findings : [];
+                lastVendorSuggestions = suggestions;
+
+                renderFindingList(vendorSummaryList, summaries);
+                renderFindingList(vendorFindingsList, findings);
+
+                if (suggestions.length === 0 && summaries.length === 0 && findings.length === 0) {
+                        vendorCard.hidden = true;
+                        if (vendorOpenBtn) {
+                                vendorOpenBtn.hidden = true;
+                        }
+                        vendorMessage.textContent = '';
+                        return;
+                }
+
+                vendorCard.hidden = false;
+                const vendorListText = formatVendorList(suggestions);
+                if (summaries.length === 0 && findings.length === 0) {
+                        vendorMessage.textContent = vendorListText
+                                ? `Detected ${vendorListText} device${suggestions.length > 1 ? 's' : ''}. Provide credentials to run vendor checks.`
+                                : '';
+                        if (vendorOpenBtn) {
+                                vendorOpenBtn.hidden = false;
+                                vendorOpenBtn.textContent = 'Provide credentials';
+                        }
+                        if (!vendorPromptShown && suggestions.length > 0) {
+                                vendorPromptShown = true;
+                                openVendorModal(suggestions);
+                        }
+                } else {
+                        vendorMessage.textContent = vendorListText ? `Vendor checks available for ${vendorListText}.` : 'Vendor checks complete.';
+                        if (vendorOpenBtn) {
+                                vendorOpenBtn.hidden = suggestions.length === 0;
+                                vendorOpenBtn.textContent = 'Run again';
+                        }
+                        vendorPromptShown = true;
+                }
+        }
+
+        function renderFindingList(container, items) {
+                if (!container) {
+                        return;
+                }
+                container.innerHTML = '';
+                if (!Array.isArray(items) || items.length === 0) {
+                        container.hidden = true;
+                        return;
+                }
+                for (const item of items) {
+                        if (!item) {
+                                continue;
+                        }
+                        const li = document.createElement('li');
+                        const severity = typeof item.severity === 'string' && item.severity.trim() !== '' ? item.severity.trim().toUpperCase() : '';
+                        const message = typeof item.message === 'string' ? item.message : '';
+                        if (severity) {
+                                const strong = document.createElement('strong');
+                                strong.textContent = severity;
+                                li.appendChild(strong);
+                                if (message) {
+                                        li.appendChild(document.createTextNode(` — ${message}`));
+                                }
+                        } else {
+                                li.textContent = message || '(no details)';
+                        }
+                        container.appendChild(li);
+                }
+                container.hidden = false;
+        }
+
+        function formatVendorName(key) {
+                switch (key) {
+                case 'fortigate':
+                        return 'Fortinet';
+                case 'cisco_ios':
+                        return 'Cisco';
+                default:
+                        return key || 'Unknown vendor';
+                }
+        }
+
+        function formatVendorList(list) {
+                if (!Array.isArray(list) || list.length === 0) {
+                        return '';
+                }
+                const names = list.map(formatVendorName);
+                if (names.length === 1) {
+                        return names[0];
+                }
+                if (names.length === 2) {
+                        return `${names[0]} and ${names[1]}`;
+                }
+                const tail = names.pop();
+                return `${names.join(', ')}, and ${tail}`;
+        }
+
+        function openVendorModal(suggestions) {
+                if (!vendorModal || !Array.isArray(suggestions) || suggestions.length === 0) {
+                        return;
+                }
+                const names = formatVendorList(suggestions);
+                if (vendorModalText) {
+                        vendorModalText.textContent = names
+                                ? `Detected ${names} device${suggestions.length > 1 ? 's' : ''}. Provide credentials to run vendor checks.`
+                                : 'Provide credentials to run vendor checks.';
+                }
+                clearVendorError();
+                const showForti = suggestions.includes('fortigate');
+                const showCisco = suggestions.includes('cisco_ios');
+                if (vendorFortiSection) {
+                        vendorFortiSection.hidden = !showForti;
+                }
+                if (vendorCiscoSection) {
+                        vendorCiscoSection.hidden = !showCisco;
+                }
+                if (!showForti) {
+                        if (fortiHostInput) fortiHostInput.value = '';
+                        if (fortiUserInput) fortiUserInput.value = '';
+                        if (fortiPassInput) fortiPassInput.value = '';
+                }
+                if (!showCisco) {
+                        if (ciscoHostInput) ciscoHostInput.value = '';
+                        if (ciscoUserInput) ciscoUserInput.value = '';
+                        if (ciscoPassInput) ciscoPassInput.value = '';
+                        if (ciscoSecretInput) ciscoSecretInput.value = '';
+                        if (ciscoPortInput) ciscoPortInput.value = '';
+                }
+                vendorModal.hidden = false;
+        }
+
+        function closeVendorModal() {
+                if (!vendorModal) {
+                        return;
+                }
+                vendorModal.hidden = true;
+        }
+
+        function showVendorError(message) {
+                if (!vendorError) {
+                        return;
+                }
+                vendorError.textContent = message || 'Unable to start vendor checks.';
+                vendorError.hidden = false;
+        }
+
+        function clearVendorError() {
+                if (!vendorError) {
+                        return;
+                }
+                vendorError.hidden = true;
+                vendorError.textContent = '';
+        }
+
+        function resetVendorState() {
+                lastVendorSuggestions = [];
+                vendorPromptShown = false;
+                if (vendorCard) {
+                        vendorCard.hidden = true;
+                }
+                if (vendorMessage) {
+                        vendorMessage.textContent = '';
+                }
+                if (vendorSummaryList) {
+                        vendorSummaryList.innerHTML = '';
+                        vendorSummaryList.hidden = true;
+                }
+                if (vendorFindingsList) {
+                        vendorFindingsList.innerHTML = '';
+                        vendorFindingsList.hidden = true;
+                }
+                if (vendorOpenBtn) {
+                        vendorOpenBtn.hidden = true;
+                }
+                closeVendorModal();
+                clearVendorError();
+                if (fortiHostInput) fortiHostInput.value = '';
+                if (fortiUserInput) fortiUserInput.value = '';
+                if (fortiPassInput) fortiPassInput.value = '';
+                if (ciscoHostInput) ciscoHostInput.value = '';
+                if (ciscoUserInput) ciscoUserInput.value = '';
+                if (ciscoPassInput) ciscoPassInput.value = '';
+                if (ciscoSecretInput) ciscoSecretInput.value = '';
+                if (ciscoPortInput) ciscoPortInput.value = '';
+        }
+
         function updatePerformanceCard(card, destEl, avgEl, p95El, jitterEl, ping, fallbackJitter, destination) {
                 if (!card) {
                         return;
@@ -347,6 +565,104 @@
                 if (jitterEl) {
                         jitterEl.textContent = formatMs(jitterValue);
                 }
+        }
+
+        if (vendorOpenBtn) {
+                vendorOpenBtn.addEventListener('click', () => {
+                        if (lastVendorSuggestions.length > 0) {
+                                openVendorModal(lastVendorSuggestions);
+                        }
+                });
+        }
+
+        if (vendorCancel) {
+                vendorCancel.addEventListener('click', () => {
+                        closeVendorModal();
+                });
+        }
+
+        if (vendorModal) {
+                vendorModal.addEventListener('click', (event) => {
+                        if (event.target && event.target.dataset && event.target.dataset.action === 'close') {
+                                closeVendorModal();
+                        }
+                });
+        }
+
+        if (vendorForm) {
+                vendorForm.addEventListener('submit', async (event) => {
+                        event.preventDefault();
+                        clearVendorError();
+                        if (!Array.isArray(lastVendorSuggestions) || lastVendorSuggestions.length === 0) {
+                                showVendorError('Vendor checks are not available right now.');
+                                return;
+                        }
+                        const payload = {};
+                        let hasPayload = false;
+                        if (lastVendorSuggestions.includes('fortigate')) {
+                                const host = fortiHostInput ? fortiHostInput.value.trim() : '';
+                                const user = fortiUserInput ? fortiUserInput.value.trim() : '';
+                                const pass = fortiPassInput ? fortiPassInput.value.trim() : '';
+                                if (host || user || pass) {
+                                        if (!host || !user || !pass) {
+                                                showVendorError('Please complete Fortinet host, username, and password.');
+                                                return;
+                                        }
+                                        payload.forti_host = host;
+                                        payload.forti_user = user;
+                                        payload.forti_pass = pass;
+                                        hasPayload = true;
+                                }
+                        }
+                        if (lastVendorSuggestions.includes('cisco_ios')) {
+                                const host = ciscoHostInput ? ciscoHostInput.value.trim() : '';
+                                const user = ciscoUserInput ? ciscoUserInput.value.trim() : '';
+                                const pass = ciscoPassInput ? ciscoPassInput.value.trim() : '';
+                                const secret = ciscoSecretInput ? ciscoSecretInput.value.trim() : '';
+                                const portRaw = ciscoPortInput ? ciscoPortInput.value.trim() : '';
+                                if (host || user || pass || secret || portRaw) {
+                                        if (!host || !user || !pass) {
+                                                showVendorError('Please complete Cisco host, username, and password.');
+                                                return;
+                                        }
+                                        payload.cisco_host = host;
+                                        payload.cisco_user = user;
+                                        payload.cisco_pass = pass;
+                                        if (secret) {
+                                                payload.cisco_secret = secret;
+                                        }
+                                        if (portRaw) {
+                                                const port = Number.parseInt(portRaw, 10);
+                                                if (!Number.isFinite(port) || port <= 0 || port > 65535) {
+                                                        showVendorError('Cisco SSH port must be between 1 and 65535.');
+                                                        return;
+                                                }
+                                                payload.cisco_port = port;
+                                        }
+                                        hasPayload = true;
+                                }
+                        }
+                        if (!hasPayload) {
+                                showVendorError('Provide credentials for at least one vendor pack.');
+                                return;
+                        }
+                        try {
+                                const resp = await fetch('/api/vendor', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify(payload),
+                                });
+                                if (!resp.ok) {
+                                        const text = await resp.text();
+                                        showVendorError(text || 'Unable to start vendor checks.');
+                                        return;
+                                }
+                                closeVendorModal();
+                        } catch (err) {
+                                console.error(err);
+                                showVendorError('Unexpected error starting vendor checks.');
+                        }
+                });
         }
 
         ensureStream();

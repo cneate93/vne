@@ -129,11 +129,16 @@ func runDiagnostics(ctx RunContext, opts RunOptions) (report.Results, error) {
 		return report.Results{}, err
 	}
 
-	var autoPackFindings []report.Finding
+	var vendorSummaries []report.Finding
+	var vendorFindings []report.Finding
 	l2Hosts := baseRes.Discovered
+	vendorSuggestions := packs.PacksFor(l2Hosts)
+	if len(vendorSuggestions) > 0 {
+		baseRes.VendorSuggestions = append([]string(nil), vendorSuggestions...)
+	}
 	if opts.AutoPacks && !opts.SkipPython {
 		phase("python-packs")
-		selected := packs.PacksFor(l2Hosts)
+		selected := vendorSuggestions
 		if len(selected) > 0 {
 			log.Printf("Auto-selected vendor packs: %v", selected)
 		}
@@ -143,9 +148,9 @@ func runDiagnostics(ctx RunContext, opts RunOptions) (report.Results, error) {
 				if ctx.FortiHost != "" && ctx.FortiUser != "" && ctx.FortiPass != "" {
 					ctx.UsePythonFortigate = true
 				} else {
-					autoPackFindings = append(autoPackFindings, report.Finding{
+					vendorSummaries = append(vendorSummaries, report.Finding{
 						Severity: "info",
-						Message:  "Detected Fortinet device(s): supply --forti-host, --forti-user, and --forti-pass to run vendor pack.",
+						Message:  "Detected Fortinet device(s): provide FortiGate credentials to run vendor checks.",
 					})
 					log.Println("Detected Fortinet device(s) but missing FortiGate credentials; skipping auto pack run.")
 				}
@@ -153,9 +158,9 @@ func runDiagnostics(ctx RunContext, opts RunOptions) (report.Results, error) {
 				if ctx.CiscoHost != "" && ctx.CiscoUser != "" && ctx.CiscoPass != "" {
 					ctx.UsePythonCisco = true
 				} else {
-					autoPackFindings = append(autoPackFindings, report.Finding{
+					vendorSummaries = append(vendorSummaries, report.Finding{
 						Severity: "info",
-						Message:  "Detected Cisco device(s): supply --cisco-host, --cisco-user, and --cisco-pass to run vendor pack.",
+						Message:  "Detected Cisco device(s): provide Cisco IOS credentials to run vendor checks.",
 					})
 					log.Println("Detected Cisco device(s) but missing Cisco IOS credentials; skipping auto pack run.")
 				}
@@ -187,8 +192,16 @@ func runDiagnostics(ctx RunContext, opts RunOptions) (report.Results, error) {
 		out, err := sshx.RunPythonPack(ctx.PythonPath, parserPath, payload)
 		if err != nil {
 			log.Println("Forti pack error:", err)
+			vendorSummaries = append(vendorSummaries, report.Finding{
+				Severity: "info",
+				Message:  "FortiGate vendor pack failed: see logs for details.",
+			})
 		} else {
 			_ = json.Unmarshal(out, &fortiRaw)
+			vendorSummaries = append(vendorSummaries, report.Finding{
+				Severity: "info",
+				Message:  "FortiGate vendor pack completed.",
+			})
 		}
 	}
 
@@ -211,12 +224,25 @@ func runDiagnostics(ctx RunContext, opts RunOptions) (report.Results, error) {
 		out, err := sshx.RunPythonPack(ctx.PythonPath, parserPath, payload)
 		if err != nil {
 			log.Println("Cisco IOS pack error:", err)
+			vendorSummaries = append(vendorSummaries, report.Finding{
+				Severity: "info",
+				Message:  "Cisco IOS vendor pack failed: see logs for details.",
+			})
 		} else {
 			var parsed report.CiscoPackResults
 			if err := json.Unmarshal(out, &parsed); err != nil {
 				log.Println("Cisco IOS pack parse error:", err)
+				vendorSummaries = append(vendorSummaries, report.Finding{
+					Severity: "info",
+					Message:  "Cisco IOS vendor pack produced invalid output.",
+				})
 			} else {
 				ciscoRaw = &parsed
+				vendorSummaries = append(vendorSummaries, report.Finding{
+					Severity: "info",
+					Message:  fmt.Sprintf("Cisco IOS vendor pack completed with %d finding(s).", len(parsed.Findings)),
+				})
+				vendorFindings = append(vendorFindings, parsed.Findings...)
 			}
 		}
 	}
@@ -242,7 +268,7 @@ func runDiagnostics(ctx RunContext, opts RunOptions) (report.Results, error) {
 
 	phase("finalizing")
 	findings := append([]report.Finding{}, baseRes.Findings...)
-	findings = append(findings, autoPackFindings...)
+	findings = append(findings, vendorSummaries...)
 	if ifaceHealth != nil {
 		if ifaceHealth.OperStatus != "" && strings.ToLower(ifaceHealth.OperStatus) != "up" {
 			findings = append(findings, report.Finding{
@@ -265,6 +291,7 @@ func runDiagnostics(ctx RunContext, opts RunOptions) (report.Results, error) {
 	}
 	if ciscoRaw != nil {
 		findings = append(findings, ciscoRaw.Findings...)
+		vendorFindings = append(vendorFindings, ciscoRaw.Findings...)
 	}
 
 	baseRes.When = time.Now()
@@ -275,6 +302,12 @@ func runDiagnostics(ctx RunContext, opts RunOptions) (report.Results, error) {
 	baseRes.IfaceHealth = ifaceHealth
 	baseRes.GwLossPct = fmt.Sprintf("%.0f%%", baseRes.GwPing.Loss*100)
 	baseRes.WanLossPct = fmt.Sprintf("%.0f%%", baseRes.WanPing.Loss*100)
+	if len(vendorSummaries) > 0 {
+		baseRes.VendorSummaries = append([]report.Finding(nil), vendorSummaries...)
+	}
+	if len(vendorFindings) > 0 {
+		baseRes.VendorFindings = append([]report.Finding(nil), vendorFindings...)
+	}
 
 	return baseRes, nil
 }
