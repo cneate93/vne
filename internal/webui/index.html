@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+        <meta charset="utf-8">
+        <title>Virtual Network Engineer</title>
+        <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+        <main class="container">
+                <header>
+                        <h1>Virtual Network Engineer</h1>
+                        <p class="tagline">Run diagnostics from your browser.</p>
+                </header>
+
+                <section class="card">
+                        <h2>Start a run</h2>
+                        <form id="start-form">
+                                <label class="field">
+                                        <span>Internet target</span>
+                                        <input type="text" name="target" id="target" value="1.1.1.1" autocomplete="off">
+                                </label>
+                                <label class="checkbox">
+                                        <input type="checkbox" name="scan" id="scan">
+                                        <span>Include local layer-2 discovery (experimental)</span>
+                                </label>
+                                <button type="submit">Start diagnostics</button>
+                        </form>
+                        <p id="start-error" class="error" role="alert" hidden></p>
+                </section>
+
+                <section class="card">
+                        <h2>Status</h2>
+                        <div class="status-grid">
+                                <div>
+                                        <span class="label">Phase</span>
+                                        <span id="status-phase">Idle</span>
+                                </div>
+                                <div>
+                                        <span class="label">Progress</span>
+                                        <span id="status-percent">0%</span>
+                                </div>
+                        </div>
+                        <p id="status-message" class="status-message">Ready</p>
+                </section>
+
+                <section class="card">
+                        <h2>Results</h2>
+                        <pre id="results" class="results">(No results yet)</pre>
+                </section>
+        </main>
+        <script src="/static/app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,126 @@
+:root {
+        color-scheme: light dark;
+        font-family: "Segoe UI", Roboto, sans-serif;
+        background-color: #f5f7fb;
+        color: #1f2933;
+}
+
+body {
+        margin: 0;
+        padding: 0;
+}
+
+.container {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 2rem 1.5rem 3rem;
+}
+
+header {
+        margin-bottom: 1.5rem;
+        text-align: center;
+}
+
+h1 {
+        margin: 0;
+        font-size: 2.25rem;
+}
+
+.tagline {
+        margin: 0.5rem 0 0;
+        color: #52606d;
+}
+
+.card {
+        background: rgba(255, 255, 255, 0.9);
+        border-radius: 12px;
+        padding: 1.5rem;
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+        margin-bottom: 1.5rem;
+}
+
+.card h2 {
+        margin-top: 0;
+        font-size: 1.4rem;
+}
+
+.field {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+}
+
+.field input[type="text"] {
+        padding: 0.65rem 0.75rem;
+        border-radius: 8px;
+        border: 1px solid #cbd2d9;
+        font-size: 1rem;
+}
+
+.checkbox {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+}
+
+button {
+        appearance: none;
+        background-color: #2563eb;
+        border: none;
+        color: #fff;
+        padding: 0.7rem 1.5rem;
+        border-radius: 999px;
+        font-size: 1rem;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+}
+
+button:hover {
+        background-color: #1d4ed8;
+}
+
+.status-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 1rem;
+        margin-bottom: 0.75rem;
+}
+
+.label {
+        display: block;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #8899a6;
+        margin-bottom: 0.35rem;
+}
+
+.status-message {
+        margin: 0;
+        font-size: 1rem;
+}
+
+.results {
+        margin: 0;
+        max-height: 400px;
+        overflow: auto;
+        background: #0f172a;
+        color: #f8fafc;
+        border-radius: 8px;
+        padding: 1rem;
+        font-size: 0.9rem;
+        line-height: 1.45;
+}
+
+.error {
+        color: #b91c1c;
+        margin-top: 0.75rem;
+}
+
+@media (max-width: 640px) {
+        .container {
+                padding: 1.5rem 1rem 2rem;
+        }
+}
