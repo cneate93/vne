@@ -6,13 +6,11 @@ import (
 	"os"
 	"time"
 
-	_ "embed"
-
+	"github.com/cneate93/vne/assets"
 	"github.com/cneate93/vne/internal/probes"
 )
 
-//go:embed report_template.html
-var defaultReportTemplate string
+var defaultReportTemplate = assets.ReportTemplate
 
 type Finding struct {
 	Severity string `json:"severity"`
