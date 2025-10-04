@@ -26,6 +26,7 @@ func WriteBundle(outZip string, results Results, raws map[string][]byte) (err er
 	if err != nil {
 		return fmt.Errorf("marshal results: %w", err)
 	}
+	jsonBytes = append(jsonBytes, '\n')
 
 	file, err := os.Create(outZip)
 	if err != nil {
@@ -49,7 +50,7 @@ func WriteBundle(outZip string, results Results, raws map[string][]byte) (err er
 	if err := addZipFile(zw, "report.html", htmlBytes); err != nil {
 		return err
 	}
-	if err := addZipFile(zw, "results.json", jsonBytes); err != nil {
+	if err := addZipFile(zw, "summary.json", jsonBytes); err != nil {
 		return err
 	}
 
