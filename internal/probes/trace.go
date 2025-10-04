@@ -1,37 +1,48 @@
 package probes
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type TraceResult struct {
 	Raw string `json:"raw"`
 }
 
-func Trace(target string, maxHops int) (TraceResult, error) {
+func Trace(target string, maxHops int, timeout time.Duration) (TraceResult, error) {
 	if maxHops <= 0 {
 		maxHops = 30
 	}
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":
-		cmd = exec.Command("tracert", "-d", "-h", strconv.Itoa(maxHops), target)
+		cmd = exec.CommandContext(ctx, "tracert", "-d", "-h", strconv.Itoa(maxHops), target)
 	default:
 		if _, err := exec.LookPath("traceroute"); err == nil {
-			cmd = exec.Command("traceroute", "-n", "-m", strconv.Itoa(maxHops), target)
+			cmd = exec.CommandContext(ctx, "traceroute", "-n", "-m", strconv.Itoa(maxHops), target)
 		} else {
 			// Fallback to tracepath if traceroute is unavailable.
-			cmd = exec.Command("tracepath", "-n", target)
+			cmd = exec.CommandContext(ctx, "tracepath", "-n", target)
 		}
 	}
 
 	out, err := cmd.CombinedOutput()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) && len(out) == 0 {
+		out = []byte(fmt.Sprintf("traceroute timed out after %s", timeout))
+	}
 	result := TraceResult{Raw: string(out)}
 	if err != nil && runtime.GOOS == "windows" {
 		trimmed := strings.TrimSpace(result.Raw)

@@ -60,6 +60,8 @@ func main() {
 	verboseFlag := flag.Bool("verbose", false, "Enable verbose logging to vne.log")
 	bundleFlag := flag.Bool("bundle", false, "Write zipped evidence bundle (vne-evidence-YYYYMMDD-HHMM.zip)")
 	jsonFlag := flag.String("json", "", "Write report data as indented JSON to the given path")
+	countFlag := flag.Int("count", 20, "Number of ping attempts for each host (default 20)")
+	timeoutFlag := flag.Duration("timeout", 10*time.Second, "Timeout for network probes (default 10s)")
 	flag.Parse()
 
 	if err := logx.Configure(*verboseFlag); err != nil {
@@ -149,7 +151,7 @@ func main() {
 	if gw != "" {
 		fmt.Println("→ Pinging default gateway:", gw)
 		log.Println("Pinging default gateway", gw)
-		gwPing, _ = probes.PingHost(gw, 10)
+		gwPing, _ = probes.PingHost(gw, *countFlag, *timeoutFlag)
 	} else {
 		fmt.Println("→ No default gateway detected; skipping gateway ping.")
 		log.Println("No default gateway detected; skipping gateway ping")
@@ -158,18 +160,18 @@ func main() {
 	// 3) DNS lookups
 	fmt.Println("→ Testing DNS lookups…")
 	log.Println("Testing DNS lookups")
-	dnsLocal, _ := probes.DNSLookupTimed("cloudflare.com", netInfo.DNSServers)
-	dnsCF, _ := probes.DNSLookupTimed("cloudflare.com", []string{"1.1.1.1"})
+	dnsLocal, _ := probes.DNSLookupTimed("cloudflare.com", netInfo.DNSServers, *timeoutFlag)
+	dnsCF, _ := probes.DNSLookupTimed("cloudflare.com", []string{"1.1.1.1"}, *timeoutFlag)
 
 	// 4) WAN ping/jitter
 	fmt.Println("→ Pinging internet target:", ctx.TargetHost)
 	log.Println("Pinging internet target", ctx.TargetHost)
-	wanPing, _ := probes.PingHost(ctx.TargetHost, 20)
+	wanPing, _ := probes.PingHost(ctx.TargetHost, *countFlag, *timeoutFlag)
 
 	// 5) Trace
 	fmt.Println("→ Traceroute (this may take ~10–20 seconds)…")
 	log.Println("Running traceroute")
-	traceOut, _ := probes.Trace(ctx.TargetHost, 20)
+	traceOut, _ := probes.Trace(ctx.TargetHost, 20, *timeoutFlag)
 
 	// 6) MTU probe
 	fmt.Println("→ MTU / Path MTU probe…")

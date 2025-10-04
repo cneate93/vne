@@ -11,9 +11,13 @@ type DNSResult struct {
 	Answers []string `json:"answers"`
 }
 
-func DNSLookupTimed(host string, resolvers []string) (DNSResult, error) {
+func DNSLookupTimed(host string, resolvers []string, timeout time.Duration) (DNSResult, error) {
 	if len(resolvers) == 0 {
 		resolvers = []string{""}
+	}
+
+	if timeout <= 0 {
+		timeout = 10 * time.Second
 	}
 
 	var total float64
@@ -24,13 +28,13 @@ func DNSLookupTimed(host string, resolvers []string) (DNSResult, error) {
 		r := net.Resolver{}
 		if resolver != "" {
 			dialer := func(ctx context.Context, network, address string) (net.Conn, error) {
-				d := &net.Dialer{Timeout: 2 * time.Second}
+				d := &net.Dialer{Timeout: timeout}
 				return d.DialContext(ctx, network, net.JoinHostPort(resolver, "53"))
 			}
 			r = net.Resolver{PreferGo: true, Dial: dialer}
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		start := time.Now()
 		ips, err := r.LookupHost(ctx, host)
 		elapsed := time.Since(start).Seconds() * 1000
